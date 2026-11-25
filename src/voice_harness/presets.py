@@ -1,4 +1,4 @@
-"""Read and validate Pocket TTS voice settings."""
+"""Pocket TTS model compatibility and the bundle's voice preset catalogue."""
 
 from dataclasses import dataclass
 import json
@@ -8,9 +8,12 @@ import re
 from .contracts import VoiceError
 
 
+TTS_MODELS = {"18m": "Pocket TTS English 18M REFL", "7m": "Pocket TTS English 7M REFL"}
+RECORDING_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg")
 SPEECH_SPEEDS = tuple(step / 4 for step in range(9))
 TEMPO_MIN, TEMPO_MAX = 80, 120
 EQ_LIMIT = 12
+_PRESET_ID = re.compile(r"[0-9a-f]{32}")
 
 
 @dataclass(frozen=True)
@@ -28,10 +31,65 @@ class Playback:
         return self.model, self.preset, self.temperature
 
 
+@dataclass(frozen=True)
+class Recipe:
+    name: str
+    samples: tuple[str, ...]
+    offset: int = 0
+    seconds: int = 24
+    temperature: float = 0.3
+
+    def validate(self):
+        if not isinstance(self.name, str) or not self.name.strip() or len(self.name) > 80:
+            raise VoiceError("Enter a preset name of up to 80 characters.")
+        if not isinstance(self.samples, (tuple, list)) or not 1 <= len(self.samples) <= 8:
+            raise VoiceError("Select one to eight source recordings.")
+        if (type(self.offset) is not int or not 0 <= self.offset <= 3600
+                or type(self.seconds) is not int or not 3 <= self.seconds <= 30
+                or type(self.temperature) not in (float, int) or not 0 <= self.temperature <= 1):
+            raise VoiceError("Voice preset settings are outside the supported range.")
+        for name in self.samples:
+            if (not isinstance(name, str) or any(char in name for char in "/\\:\0")
+                    or Path(name).suffix.lower() not in RECORDING_EXTENSIONS):
+                raise VoiceError("Select recordings from the speech bundle's sample folder.")
+        if len({name.casefold() for name in self.samples}) != len(self.samples):
+            raise VoiceError("Use each recording only once per preset.")
+
+
 class VoiceLibrary:
     def __init__(self, directory):
         self.root = directory
+        self.samples = directory / "samples"
+        self.presets = directory / "presets"
         self.preference = directory / "chat-voice.json"
+
+    def recordings(self):
+        return sorted(path.name for path in self.samples.glob("*") if path.is_file()
+                      and not path.is_symlink() and path.suffix.lower() in RECORDING_EXTENSIONS)
+
+    def recipes(self):
+        result = {}
+        for path in sorted(self.presets.glob("*/recipe.json")):
+            if not _PRESET_ID.fullmatch(path.parent.name) or not path.with_name("voice.safetensors").is_file():
+                continue
+            try:
+                data = json.loads(path.read_text("utf-8"))
+                recipe = Recipe(**data)
+                recipe.validate()
+                result[path.parent.name] = Recipe(recipe.name, tuple(recipe.samples), recipe.offset,
+                                                  recipe.seconds, recipe.temperature)
+            except (OSError, ValueError, TypeError, VoiceError):
+                continue
+        return result
+
+    def voices(self, model, recipes):
+        choices = {"alba": ("Alba", 0.3)}
+        if model == "18m":
+            if (self.root / "custom.safetensors").is_file():
+                choices["original"] = ("Original clone", 0.3)
+            choices.update((ident, (f"{recipe.name} · {ident[:6]}", recipe.temperature))
+                           for ident, recipe in recipes.items())
+        return choices
 
     def chat(self):
         if not self.preference.is_file():
@@ -45,14 +103,13 @@ class VoiceLibrary:
 
     def resolve(self, settings):
         speed = settings.speed
-        # Accept older voice settings, including mute, when opening a saved voice.
         if speed not in SPEECH_SPEEDS and not (TEMPO_MIN / 100 <= speed <= TEMPO_MAX / 100
                                                and speed == round(speed, 2)):
             raise VoiceError("Choose a speaking speed from 0.80× to 1.20×.")
         for gain in (settings.bass, settings.mid, settings.treble):
             if type(gain) is not int or not -EQ_LIMIT <= gain <= EQ_LIMIT:
                 raise VoiceError("Choose EQ gains between −12 and +12 dB.")
-        if settings.model not in ("7m", "18m") or not 0 <= settings.temperature <= 1:
+        if settings.model not in TTS_MODELS or not 0 <= settings.temperature <= 1:
             raise VoiceError("Choose a supported Pocket TTS model and temperature.")
         if settings.preset == "alba":
             suffix = "-7m" if settings.model == "7m" else ""
@@ -61,7 +118,7 @@ class VoiceLibrary:
             raise VoiceError("This clone uses the English 18M REFL model.")
         if settings.preset == "original":
             voice = Path("custom.safetensors")
-        elif re.fullmatch("[0-9a-f]{32}", settings.preset):
+        elif isinstance(settings.preset, str) and _PRESET_ID.fullmatch(settings.preset):
             voice = Path("presets") / settings.preset / "voice.safetensors"
         else:
             raise VoiceError("Choose an installed voice preset.")

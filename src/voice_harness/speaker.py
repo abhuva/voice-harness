@@ -7,14 +7,16 @@ from .contracts import VoiceError
 from .engine import ResidentEngine
 from .output_audio import OutputAudio, output_levels
 from .presets import VoiceLibrary
+from .render_device import ReferencedOutput
 from .tempo import playback_blocks
 
 
 class PocketSpeaker:
-    def __init__(self, directory, settings, meter):
+    def __init__(self, directory, settings, meter, *, reference=None):
         self.directory = directory
         self.playback = settings
         self.meter = meter
+        self.reference = reference
         self.engine = ResidentEngine(directory)
 
     def prepare(self, stop):
@@ -29,7 +31,7 @@ class PocketSpeaker:
     def close(self):
         self.engine.unload()
 
-    def speak(self, next_segment, stop, stage):
+    def speak(self, next_segment, stop, stage, *, played=None):
         import sounddevice as sd
 
         abandoned = Event()
@@ -53,8 +55,11 @@ class PocketSpeaker:
             drained = False
             try:
                 output = OutputAudio(self.engine.rate)
-                device = sd.RawOutputStream(samplerate=self.engine.rate, channels=1,
-                                             dtype="float32", latency="low")
+                if self.reference is None:
+                    device = sd.RawOutputStream(samplerate=self.engine.rate, channels=1,
+                                                dtype="float32", latency="low")
+                else:
+                    device = ReferencedOutput(self.engine.rate, self.reference, token)
                 index = 0
                 while not token.is_set():
                     pcm = pending.result()
@@ -65,7 +70,8 @@ class PocketSpeaker:
                         device.start()
                         started = True
                     index += 1
-                    stage(f"Playing Kindroid reply · segment {index}")
+                    if played is None:
+                        stage(f"Playing Kindroid reply · segment {index}")
                     for block in playback_blocks(pcm, self.engine.rate, lambda: self.playback.speed):
                         if token.is_set():
                             break
@@ -73,11 +79,13 @@ class PocketSpeaker:
                         block = output.process(block, (tuning.bass, tuning.mid, tuning.treble))
                         device.write(block)
                         self.meter(*output_levels(block))
+                    if played is not None and not token.is_set():
+                        played(index)
                 if started and not token.is_set():
                     device.stop()
                     drained = True
             except (OSError, sd.PortAudioError):
-                raise VoiceError("Could not play the reply. Check the Windows output device.") from None
+                raise VoiceError("Could not play speech. Check the Windows output device.") from None
             finally:
                 abandoned.set()
                 if device is not None:

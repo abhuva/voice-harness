@@ -1,0 +1,40 @@
+[project]
+site_name = "Voice Harness"
+site_description = "Windows setup, voice calls, local speech tools, and architecture decisions."
+site_url = "https://abhuva.github.io/voice-harness/"
+repo_url = "https://github.com/abhuva/voice-harness"
+repo_name = "abhuva/voice-harness"
+docs_dir = "docs"
+site_dir = "site"
+dev_addr = "127.0.0.1:8767"
+nav = [
+    { "Overview" = "README.md" },
+    { "Setup and operation" = "operations.md" },
+    { "Architecture" = "architecture.md" },
+    { "Decision records" = [
+        "adr/README.md",
+        { "001 · Single-host runtime" = "adr/001-single-host-call.md" },
+        { "002 · Local voice presets" = "adr/002-local-voice-presets.md" },
+        { "003 · Voice interruption" = "adr/003-barge-in.md" },
+    ] },
+]
+
+[project.theme]
+font = false
+features = ["navigation.footer", "navigation.sections", "navigation.top", "content.code.copy", "search.highlight"]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "teal"
+accent = "teal"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "teal"
+accent = "teal"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"

@@ -14,6 +14,13 @@ class Job:
     stop: Event = field(default_factory=Event, compare=False)
 
 
+@dataclass(frozen=True)
+class Outcome:
+    """A terminal result that reflects any effects already committed."""
+
+    status: str
+
+
 class Harness:
     def __init__(self, state):
         self.state = state
@@ -43,8 +50,12 @@ class Harness:
         status = f"{job.label} interrupted."
         try:
             if not job.stop.is_set():
-                status = operation(job.stop)
-            if job.stop.is_set():
+                result = operation(job.stop)
+                if isinstance(result, Outcome):
+                    status = result.status
+                else:
+                    status = f"{job.label} stopped." if job.stop.is_set() else result
+            else:
                 status = f"{job.label} stopped."
         except VoiceError as exc:
             status = str(exc)

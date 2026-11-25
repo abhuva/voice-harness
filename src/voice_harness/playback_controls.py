@@ -3,17 +3,29 @@
 from dataclasses import replace
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QSlider
+from PyQt6.QtWidgets import (
+    QCheckBox, QFormLayout, QHBoxLayout, QLabel, QSlider, QToolButton, QVBoxLayout, QWidget,
+)
 
 from .presets import EQ_LIMIT, TEMPO_MAX, TEMPO_MIN
 
 
-class PlaybackControls(QGroupBox):
+class PlaybackControls(QWidget):
     changed = pyqtSignal()
 
     def __init__(self):
-        super().__init__("Playback")
-        form = QFormLayout(self)
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.toggle = QToolButton()
+        self.toggle.setText("&Playback")
+        self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle.setCheckable(True)
+        self.toggle.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        layout.addWidget(self.toggle, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.details = QWidget()
+        layout.addWidget(self.details)
+        form = QFormLayout(self.details)
         self.speed = self.add_slider(form, "Speaking speed", TEMPO_MIN, TEMPO_MAX, 100,
                                      lambda value: "1.00× · Normal" if value == 100 else f"{value / 100:.2f}×")
         self.bands = [
@@ -23,6 +35,15 @@ class PlaybackControls(QGroupBox):
         self.mute = QCheckBox("Mute playback")
         self.mute.toggled.connect(lambda _checked: self.changed.emit())
         form.addRow(self.mute)
+        self.toggle.toggled.connect(self.show_details)
+        self.show_details(False)
+
+    def show_details(self, expanded):
+        if not expanded and self.details.isAncestorOf(self.focusWidget()):
+            self.toggle.setFocus()
+        self.details.setVisible(expanded)
+        self.toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self.toggle.setAccessibleDescription("Expanded" if expanded else "Collapsed")
 
     def add_slider(self, form, name, minimum, maximum, initial, format_value):
         slider = QSlider(Qt.Orientation.Horizontal)

@@ -1,52 +1,64 @@
-"""Windows capture at 16 kHz. One microphone opens for each operator turn."""
+"""Bounded Windows microphone stream with timestamps in the host clock."""
 
 from collections import deque
-import math
+from contextlib import ExitStack, contextmanager
+from threading import Condition
+import time
 
 from .contracts import VoiceError
+from .echo import FRAME_SAMPLES, RATE
 
 
 class WindowsMicrophone:
-    def __init__(self, meter):
-        self.meter = meter
+    def __init__(self):
+        self._frames = deque(maxlen=100)
+        self._condition = Condition()
+        self._sequence = 0
+        self._last_read = 0
+        self._ended = False
 
-    def capture(self, settings, stop, stage, accept):
-        import numpy as np
+    def _capture(self, data, frames, timing, status):
+        at = time.monotonic() + timing.inputBufferAdcTime - timing.currentTime
+        with self._condition:
+            self._sequence += 1
+            overflow = status.input_overflow or frames != FRAME_SAMPLES
+            self._frames.append((self._sequence, data.copy(), at, overflow))
+            self._condition.notify()
+
+    def _finished(self):
+        with self._condition:
+            self._ended = True
+            self._condition.notify()
+
+    def discard_buffered(self):
+        with self._condition:
+            self._frames.clear()
+            self._last_read = self._sequence
+
+    @contextmanager
+    def open(self):
         import sounddevice as sd
 
-        pause_blocks = round(settings.finish * 10)
-        threshold = 32768 * 10 ** (settings.threshold / 20)
-        recent = deque(maxlen=3)
-        recording = False
-        quiet = 0
-        try:
-            with sd.InputStream(samplerate=16000, channels=1, dtype="int16", blocksize=1600) as mic:
-                stage("Listening · waiting for speech")
-                while not stop.is_set():
-                    block, overflow = mic.read(1600)
-                    if stop.is_set():
-                        break
-                    if overflow:
-                        raise VoiceError("Microphone audio was interrupted. This turn was not sent.")
-                    rms = math.sqrt(np.mean(block.astype("float32") ** 2))
-                    peak = max(abs(int(block.min())), abs(int(block.max())))
-                    self.meter(20 * math.log10(max(rms / 32768, 1e-5)),
-                               20 * math.log10(max(peak / 32768, 1e-5)))
-                    active = rms >= threshold
-                    if not recording:
-                        if not active:
-                            recent.append(block)
-                            continue
-                        recording = True
-                        stage("Recording · pause to finish")
-                        for buffered in recent:
-                            accept(buffered, False)
-                    accept(block, active)
-                    quiet = 0 if active else quiet + 1
-                    if quiet >= pause_blocks:
-                        return True
-        except (OSError, sd.PortAudioError):
-            raise VoiceError("Could not record. Check the Windows microphone and its permissions.") from None
-        finally:
-            self.meter(-100.0, -100.0)
-        return False
+        with ExitStack() as stack:
+            try:
+                device = sd.InputStream(samplerate=RATE, channels=1, dtype="int16",
+                                        blocksize=FRAME_SAMPLES, callback=self._capture,
+                                        finished_callback=self._finished)
+                stack.callback(device.close)
+                device.start()
+            except (OSError, sd.PortAudioError):
+                raise VoiceError("Could not record. Check the Windows microphone and its permissions.") from None
+            yield
+
+    def read(self, stop):
+        with self._condition:
+            while not stop.is_set():
+                if self._frames:
+                    sequence, samples, at, overflow = self._frames.popleft()
+                    dropped = sequence != self._last_read + 1
+                    self._last_read = sequence
+                    return samples, at, overflow or dropped
+                if self._ended:
+                    raise VoiceError("The Windows microphone stopped before the turn finished.")
+                self._condition.wait(timeout=0.05)
+        return None

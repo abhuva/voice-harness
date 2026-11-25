@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -20,6 +21,7 @@ class CallTests(unittest.TestCase):
         self.state = State(self.path)
         self.stop = Event()
         self.recognizer, self.microphone, self.speaker, self.provider = (Mock() for _ in range(4))
+        self.microphone.open.return_value = nullcontext()
         self.messages, self.played = [], []
         self.first_played = Event()
         self.speaker.speak.side_effect = self.play
@@ -35,26 +37,44 @@ class CallTests(unittest.TestCase):
                  self.state, CallInput(chunk=0.2, paragraph=0.4), self.stop, Mock(),
                  self.messages.append, Mock())
 
-    def capture_one(self, settings, stop, stage, accept):
+    def capture_one(self, settings, stop, stage, accept, *, speech_started, reply_pending):
         self.assertEqual(settings.finish, 4.0)
+        speech_started()
         for gap in (4, 2):
             accept(self.block, True)
             for _ in range(gap):
                 accept(self.block * 0, False)
         return True
 
-    def test_two_turns_use_replacement_workers_and_wait_for_delayed_playback(self):
+    def test_two_turns_use_replacement_workers_with_no_overlap_in_sends(self):
         captures = 0
+        finished = [Event(), Event()]
+        plays = 0
 
-        def capture(settings, stop, stage, accept):
+        def play(take, token, stage):
+            nonlocal plays
+            self.play(take, token, stage)
+            finished[plays].set()
+            plays += 1
+
+        def capture(settings, stop, stage, accept, **hooks):
             nonlocal captures
-            if captures:
-                self.assertEqual(self.played[-1], "Last fragment")
             captures += 1
+            if captures > 1:
+                self.assertTrue(finished[captures - 2].wait(2))
             if captures == 3:
-                stop.set()
+                self.stop.set()
                 return False
-            return self.capture_one(settings, stop, stage, accept)
+            # This is a normal turn. Let the prior reply finish settling.
+            if captures == 2:
+                for _ in range(200):
+                    if not hooks["reply_pending"]():
+                        break
+                    self.stop.wait(0.01)
+                self.assertFalse(hooks["reply_pending"]())
+            return self.capture_one(settings, stop, stage, accept, **hooks)
+
+        self.speaker.speak.side_effect = play
 
         def stream(_text, _token):
             self.assertIsNotNone(self.state.pending_delivery())
@@ -82,15 +102,15 @@ class CallTests(unittest.TestCase):
         with self.assertRaisesRegex(VoiceError, "uncertain"):
             self.run_call()
         self.provider.send.assert_called_once()
-        self.assertEqual(self.messages[-1].status, "Check delivery")
+        checked = next(message for message in self.messages if message.status == "Check delivery")
         restarted = State(self.path)
-        self.assertEqual(restarted.pending_delivery(), self.messages[-1].id)
+        self.assertEqual(restarted.pending_delivery(), checked.id)
         with self.assertRaises(VoiceError):
             restarted.claim_delivery("second-turn")
 
     def test_stop_in_capture_sends_nothing(self):
-        def capture(settings, stop, stage, accept):
-            stop.set()
+        def capture(settings, stop, stage, accept, **hooks):
+            self.stop.set()
             return False
 
         self.microphone.capture.side_effect = capture
@@ -110,6 +130,118 @@ class CallTests(unittest.TestCase):
         self.provider.send.side_effect = stream
         self.run_call(speaker=False)
         self.provider.send.assert_called_once()
+        self.assertIsNotNone(self.state.pending_delivery())
+
+    def interrupt_fixture(self, trigger):
+        captures = 0
+        self.recognizer.transcribe.side_effect = ["First", "message", "New", "speech"]
+
+        def capture(settings, cancel, stage, accept, **hooks):
+            nonlocal captures
+            captures += 1
+            if captures == 2:
+                self.assertTrue(trigger.wait(2))
+                self.assertTrue(hooks["reply_pending"]())
+            if captures >= 3:
+                while not cancel.is_set():
+                    self.stop.wait(0.01)
+                return False
+            return self.capture_one(settings, cancel, stage, accept, **hooks)
+
+        self.microphone.capture.side_effect = capture
+        self.draft_ready = Event()
+
+        class Messages(list):
+            def append(messages, message):
+                super().append(message)
+                if message.body == "New\n\nspeech" and message.status == "Dictating":
+                    self.draft_ready.set()
+                if message.body == "Second answer." and message.status == "":
+                    self.stop.set()
+
+        self.messages = Messages()
+
+    def test_interrupt_before_confirmation_captures_draft_and_waits_to_send(self):
+        waiting = Event()
+        first_closed = Event()
+        self.interrupt_fixture(waiting)
+
+        def send(text, token):
+            if text.startswith("First"):
+                try:
+                    waiting.set()
+                    self.assertTrue(self.draft_ready.wait(2))
+                    self.assertFalse(token.is_set())
+                    self.assertIsNotNone(self.state.pending_delivery())
+                    self.assertEqual(self.provider.send.call_count, 1)
+                    yield "First acknowledgment."
+                    self.fail("Stream should close after confirming the interrupted send")
+                finally:
+                    first_closed.set()
+            else:
+                self.assertTrue(first_closed.is_set())
+                yield "Second answer."
+
+        self.provider.send.side_effect = send
+        self.run_call()
+        self.assertEqual(self.provider.send.call_count, 2)
+        self.assertEqual(self.played, ["Second answer."])
+        self.assertTrue(any(message.status == "Interrupted" for message in self.messages))
+        self.assertIsNone(self.state.pending_delivery())
+
+    def test_interrupt_playback_cancels_audio_and_reopens_no_device(self):
+        playing = Event()
+        ended = Event()
+        self.interrupt_fixture(playing)
+
+        def play(take, token, stage):
+            self.played.append(take(token))
+            if self.played[-1] == "First audio.":
+                playing.set()
+                for _ in range(200):
+                    if token.is_set():
+                        ended.set()
+                        return
+                    self.stop.wait(0.01)
+                self.fail("Playback did not stop")
+            while take(token):
+                pass
+
+        def send(text, token):
+            if text.startswith("First"):
+                yield "First audio. "
+                for _ in range(200):
+                    if token.is_set():
+                        return
+                    self.stop.wait(0.01)
+                self.fail("Reply did not stop")
+            else:
+                self.assertTrue(ended.is_set())
+                yield "Second answer."
+
+        self.speaker.speak.side_effect = play
+        self.provider.send.side_effect = send
+        self.run_call()
+        self.assertEqual(self.played, ["First audio.", "Second answer."])
+        self.assertEqual(self.provider.send.call_count, 2)
+        self.microphone.open.assert_called_once()
+
+    def test_interrupted_draft_is_held_if_earlier_delivery_is_uncertain(self):
+        waiting = Event()
+        self.interrupt_fixture(waiting)
+
+        def send(text, token):
+            waiting.set()
+            self.assertTrue(self.draft_ready.wait(2))
+            self.assertFalse(token.is_set())
+            raise VoiceError("Delivery is uncertain.")
+
+        self.provider.send.side_effect = send
+        with self.assertRaisesRegex(VoiceError, "uncertain"):
+            self.run_call()
+        self.provider.send.assert_called_once()
+        self.assertEqual(self.messages[-1].status, "Held · check earlier delivery")
+        self.assertEqual(self.messages[-1].body, "New\n\nspeech")
         self.assertIsNotNone(self.state.pending_delivery())
 
     def test_speaker_failure_closes_stream_and_preserves_partial_reply(self):

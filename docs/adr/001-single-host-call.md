@@ -18,8 +18,9 @@ a platform-independent call sequence that can use the established Windows bundle
 
 ## Decision
 
-The first workflow uses an in-process harness with one interactive job and a
-half-duplex call orchestrator. Microphone, recognition, provider and playback
+The first workflow used an in-process harness with one interactive job and a
+half-duplex call orchestrator. [ADR-003](003-barge-in.md) extends the call to
+continuous microphone capture while preserving the foreground slot. Microphone, recognition, provider and playback
 have replaceable contracts. The Pocket TTS adapter keeps its existing native
 process boundary. The local database owns the unresolved send claim and terminal
 operation status. The first delivery focuses on the chat window and settings

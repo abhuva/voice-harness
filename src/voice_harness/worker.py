@@ -5,15 +5,20 @@ import time
 
 from .call import run_call
 from .contracts import Message
+from .echo import EchoProcessor, PlaybackReference
 from .microphone import WindowsMicrophone
 from .provider import KindroidClient
 from .recognizer import DictateRecognizer
 from .resources import resident_sample
 from .speaker import PocketSpeaker
+from .speech_input import SpeechInput
 
 
 class Worker(QThread):
     stage = pyqtSignal(str)
+    progress = pyqtSignal(int, int, str)
+    imported = pyqtSignal(tuple)
+    cloned = pyqtSignal(str)
     message = pyqtSignal(object)
     mic_level = pyqtSignal(float, float)
     speaker_level = pyqtSignal(float, float)
@@ -50,11 +55,14 @@ class CallOperation:
 
     def __call__(self, worker, stop):
         provider = KindroidClient(*self.settings.credentials())
-        microphone = WindowsMicrophone(worker.mic_level.emit)
+        reference = PlaybackReference()
+        enhancement = EchoProcessor(reference)
+        microphone = SpeechInput(WindowsMicrophone(), enhancement, worker.mic_level.emit)
         recognizer = DictateRecognizer(self.settings.dictate)
         speaker = None
         if self.playback.speed:
-            speaker = PocketSpeaker(self.settings.pocket, self.playback, worker.speaker_level.emit)
+            speaker = PocketSpeaker(self.settings.pocket, self.playback, worker.speaker_level.emit,
+                                    reference=reference)
             self.speaker = speaker
             speaker.playback = self.playback
         start, cpu_start = time.monotonic(), time.process_time()
@@ -62,7 +70,10 @@ class CallOperation:
         def ready():
             child = speaker.engine.child if speaker else None
             sample = resident_sample(start, cpu_start, child.pid if child else None)
-            worker.resources.emit(sample.description())
+            details = sample.description()
+            if self.call_input.interrupt and speaker is not None and not enhancement.available:
+                details += "\nInstall the WebRTC audio package to interrupt during playback."
+            worker.resources.emit(details)
 
         run_call(microphone, recognizer, speaker, provider, worker.harness.state,
                  self.call_input, stop, worker.stage.emit, worker.message.emit, ready)

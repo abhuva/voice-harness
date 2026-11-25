@@ -20,7 +20,7 @@ $logs = Join-Path ([IO.Path]::GetTempPath()) ('voice-harness-tests-' + [guid]::N
 New-Item -ItemType Directory -Path $logs | Out-Null
 $stdout = Join-Path $logs 'stdout.txt'
 $stderr = Join-Path $logs 'stderr.txt'
-$bootstrap = "import os, sys, unittest; sys.path.insert(0, 'src'); os.environ['QT_QPA_PLATFORM'] = 'offscreen'; os.environ['VOICE_HARNESS_MODEL_FIXTURE'] = sys.argv[2] if sys.argv[3] == 'True' else ''; suite = unittest.defaultTestLoader.discover('tests', pattern=sys.argv[1]); sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())"
+$bootstrap = "import os, sys, unittest; sys.path[:0] = ['src', 'var/webrtc-audio-0.2.0']; os.environ['QT_QPA_PLATFORM'] = 'offscreen'; os.environ['VOICE_HARNESS_MODEL_FIXTURE'] = sys.argv[2] if sys.argv[3] == 'True' else ''; suite = unittest.defaultTestLoader.discover('tests', pattern=sys.argv[1]); sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())"
 $arguments = @('-c', ('"{0}"' -f $bootstrap), ('"{0}"' -f $Pattern), ('"{0}"' -f $Assets), [string][bool]$LocalModels)
 $p = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $root -PassThru `
     -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr

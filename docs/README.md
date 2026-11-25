@@ -1,15 +1,30 @@
 ---
+title: Overview
+description: Set up Voice Harness, make a Kindroid call, and learn how the Windows audio and delivery workers fit together.
 kind: index
 scope: voice-harness
 status: current
 reviewed: 2026-11-25
 ---
 
-# Documentation
+# Voice Harness
 
-- [Setup, operation and recovery](operations.md)
-- [Architecture and worker contracts](architecture.md)
-- [Architecture decisions](adr/README.md)
+Voice Harness is a Windows desktop app for spoken Kindroid conversations.
+It transcribes speech locally, sends the text to Kindroid, and plays the reply
+with Pocket TTS. You can speak over a reply to start your next turn.
 
-The source and tests describe implemented behavior. The operator guide records the
-steps that still require a physical setup and an approved disposable conversation.
+## Get started
+
+- [Install and make a call](operations.md#windows-bundle) with the Windows speech bundle.
+- [Choose a TTS model or clone a voice](operations.md#tts-and-voice-cloning) using local recordings.
+- [Adjust voice interruption](operations.md#during-a-call) or recover an uncertain delivery.
+
+## How it works
+
+- [Architecture](architecture.md) describes the call workflow, audio adapters,
+  and how the harness tracks work and delivery.
+- [Decision records](adr/README.md) explain the single-host runtime, voice preset
+  storage, and reply interruption.
+
+See [verification](operations.md#verification) for the offline checks and physical
+device acceptance steps.

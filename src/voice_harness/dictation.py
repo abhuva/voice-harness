@@ -8,7 +8,7 @@ from .chunks import PauseChunks
 from .contracts import VoiceError
 
 
-def capture_turn(microphone, recognizer, settings, stop, stage, draft):
+def capture_turn(microphone, recognizer, settings, stop, stage, draft, *, speech_started, reply_pending):
     parts = []
     previous = None
     pending = deque()
@@ -43,7 +43,9 @@ def capture_turn(microphone, recognizer, settings, stop, stage, draft):
             chunks.accept(block, active)
 
         try:
-            if not microphone.capture(settings, stop, stage, accept) or stop.is_set():
+            ended = microphone.capture(settings, stop, stage, accept,
+                                       speech_started=speech_started, reply_pending=reply_pending)
+            if not ended or stop.is_set():
                 return ""
             stage("Finishing your transcript")
             chunks.flush()

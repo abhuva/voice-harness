@@ -14,6 +14,6 @@ $python = Join-Path $Assets 'voice/runtime/python.exe'
 if (!(Test-Path -LiteralPath $python -PathType Leaf)) {
     throw 'Restore the Windows voice bundle or supply its directory with -Assets.'
 }
-$bootstrap = "import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module('voice_harness', run_name='__main__')"
-& $python -c $bootstrap (Join-Path $root 'src') --root $root --assets $Assets
+$bootstrap = "import runpy, sys; sys.path[:0] = [sys.argv.pop(1), sys.argv.pop(1)]; runpy.run_module('voice_harness', run_name='__main__')"
+& $python -c $bootstrap (Join-Path $root 'src') (Join-Path $root 'var/webrtc-audio-0.2.0') --root $root --assets $Assets
 if ($LASTEXITCODE) { throw 'Voice Harness did not start or close normally.' }

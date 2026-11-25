@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from typing import Protocol
 
 
@@ -25,6 +26,7 @@ class CallInput:
     chunk: float = 1.0
     paragraph: float = 2.0
     finish: float = 4.0
+    interrupt: bool = True
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,11 @@ class Message:
 
 
 class Microphone(Protocol):
+    def open(self) -> AbstractContextManager: ...
+    def discard_buffered(self) -> None: ...
     def capture(self, settings: CallInput, stop: Cancellation, stage: Stage,
-                accept: Callable[[object, bool], None]) -> bool: ...
+                accept: Callable[[object, bool], None], *,
+                speech_started: Callable[[], None], reply_pending: Callable[[], bool]) -> bool: ...
 
 
 class Recognizer(Protocol):

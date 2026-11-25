@@ -76,6 +76,7 @@ class Settings:
 
 def validate_call(call):
     if (not isinstance(call.model, str) or call.model not in STT_MODELS
+            or type(call.interrupt) is not bool
             or type(call.threads) is not int or not 1 <= call.threads <= 16
             or type(call.threshold) is not int or not -80 <= call.threshold <= -5
             or any(type(value) not in (int, float) or not 0.1 <= value <= 10.0
