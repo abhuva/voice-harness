@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-harness"
+version = "0.1.0"
+description = "A local Windows voice call harness for Kindroid"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26,<3",
+    "PyQt6>=6.7,<7",
+    "requests>=2.32,<3",
+    "sherpa-onnx>=1.12,<2",
+    "sounddevice>=0.5,<1",
+]
+
+[project.scripts]
+voice-harness = "voice_harness.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+voice_harness = ["fluid-speech-pro.json"]
