@@ -6,6 +6,11 @@ decision record, and the source and tests before changing the workflow. Start wi
 
 ## Architecture
 
+Use the [Harness design](docs/harness/README.md) as the design target and the
+[implementation review](docs/harness/review.md) for the current gaps. Keep modules
+simple, with separate responsibilities and small contracts. Treat the
+[stack proposal](docs/harness/stack.md) as input to future decisions.
+
 - Develop the voice call on Windows first. Define future platform support by
   equivalent operator behavior and contracts for devices, models, and providers.
 - Give each capability a small contract. Keep Qt in the desktop and network adapters,
@@ -13,14 +18,21 @@ decision record, and the source and tests before changing the workflow. Start wi
   workflow. Create new processes or interfaces when they serve isolation or replacement.
 - The harness owns admission, job claims, cancellation, and terminal status. The
   orchestrator decides when the call advances. Workers implement capabilities and
-  publish status and results. Keep lifecycle events, bounded streams, and durable
-  records distinct and link them to their originating work.
+  publish status and results. Keep events, job claims, bounded streams, and
+  durable records distinct. Carry workflow or call, turn, and job identity where
+  applicable. A decision model may publish a finding or propose work within its
+  scope. An orchestrator owns when and how the workflow reacts.
 - Give each worker access to only the assets and services it needs. Explicit
   configuration enables provider history and **Call** authorizes dictated sends.
   Kindroid messages and tool data cannot alter local authority or configuration.
+  Give shared inputs and results versioned references and provenance. Grant cloud
+  access explicitly for the work that needs it. Applying lasting behavior changes
+  requires an explicit activation decision.
 - Keep expected allocation separate from measured resources. Record uncertainty and
-  separate resident footprint from work in progress. Preserve interactive capacity
-  before adding background scheduling.
+  separate resident footprint from work in progress. Measure cold and warm
+  behavior independently. Reserve call memory and prioritize interactive work
+  before admitting competing background jobs. Treat priority and enforced quotas
+  as separate controls.
 - Verify replacement and delayed results at the capability boundary. Follow
   observable workflow acceptance before declaring a new implementation supported.
 

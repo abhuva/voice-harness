@@ -5,7 +5,11 @@ status: current
 reviewed: 2026-11-25
 ---
 
-# Architecture
+# Voice runtime
+
+This page describes the shipped Windows implementation. See the
+[Harness design](harness/README.md) for the intended architecture and the
+[implementation review](harness/review.md) for the gaps.
 
 The call keeps one microphone open while Kindroid replies. The call owns one
 foreground slot through shutdown. Within it, one capture worker can collect the
@@ -32,9 +36,9 @@ keep incremental text in the same bubble. Pending dictation is capped at 32 chun
 during capture, plus the final flush. Each decode chunk is at most eight seconds.
 Live replies are limited to 512 KiB at the provider boundary and eight queued
 speech segments of at most 480 characters in the player. Backpressure slows reply
-consumption when playback falls behind. The render-ahead future belongs to the
-playback worker, and its completion controls when the call may listen again.
-After Stop, the harness holds admission until the active job actually settles.
+consumption when playback falls behind. The playback worker owns render-ahead
+while the microphone stays open. The call advances after the previous exchange
+settles, including playback completion or interruption. After Stop, the harness holds admission until the active job actually settles.
 Playback interruption cancels local synthesis and queued PCM independently of
 the provider stream. The render adapter fades to silence in one 10 ms frame.
 Already submitted device buffers drain, so audible stop time depends on the
@@ -66,8 +70,8 @@ recognizer limited to the chosen thread count, and one native synthesis process
 and output stream for an unmuted call. The current adapters use CPU inference.
 The estimated peak memory and exact synthesis CPU demand are unknown. After
 warmup the status tooltip reports the host and TTS working sets separately and
-the host and native synthesis CPU time and the elapsed time observed during loading. Working sets include the
-processes beyond the model allocations and are snapshots. The harness does not
+CPU time for the Python and native synthesis processes and elapsed startup time.
+The working-set snapshots include memory beyond the model allocations. The harness does not
 enforce a RAM or CPU quota. The speech models stay resident during the call and
 are released when it ends. The same one-slot policy covers local import, preview
 and encoding. Preview uses one synthesis process and the output device. Cloning

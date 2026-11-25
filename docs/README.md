@@ -21,7 +21,10 @@ with Pocket TTS. You can speak over a reply to start your next turn.
 
 ## How it works
 
-- [Architecture](architecture.md) describes the call workflow, audio adapters,
+- [Harness design](harness/README.md) explains how modules, workflows, resources,
+  and saved results fit together. The [implementation review](harness/review.md)
+  compares that design with the Windows client.
+- [Voice runtime](architecture.md) describes the call workflow, audio adapters,
   and how the harness tracks work and delivery.
 - [Decision records](adr/README.md) explain the single-host runtime, voice preset
   storage, and reply interruption.

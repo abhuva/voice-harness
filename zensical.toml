@@ -10,7 +10,12 @@ dev_addr = "127.0.0.1:8767"
 nav = [
     { "Overview" = "README.md" },
     { "Setup and operation" = "operations.md" },
-    { "Architecture" = "architecture.md" },
+    { "Harness" = [
+        "harness/README.md",
+        { "Stack proposal" = "harness/stack.md" },
+        { "Implementation review" = "harness/review.md" },
+    ] },
+    { "Voice runtime" = "architecture.md" },
     { "Decision records" = [
         "adr/README.md",
         { "001 · Single-host runtime" = "adr/001-single-host-call.md" },
