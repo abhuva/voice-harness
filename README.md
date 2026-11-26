@@ -15,30 +15,52 @@ streamed reply with local Pocket TTS. The chat window shows both sides as they a
    credentials requests one recent history page. The TTS and cloning tools also run
    locally without Kindroid credentials.
 3. Click **Call** and speak when the status shows **Listening**. Pause to send the turn.
-   The microphone stays open for the call. Start speaking while Kindroid is replying
-   to interrupt it and begin a new turn. **Stop** ends the call.
+   The microphone stays open, and speech recognition loads on demand by default. During a
+   reply, about three seconds of sustained speech interrupts Kindroid and keeps audio from
+   the start of your utterance. If a dropout drops the current draft, pause and
+   speak again in the same call. **Stop** ends the call.
    If the app asks you to check delivery, inspect the Kindroid conversation and then
    click **I checked delivery** to enable a new call.
 
 Expand **Playback** in the chat tab for live speed and EQ controls and mute for
-the next call. The microphone and output meters stay visible. The **Settings** tab
-configures the recognizer and pause timings. **Save settings** keeps those choices
-in this repository. On first run the window uses the
+the next call. **Save playback settings** keeps those choices across restarts.
+The microphone and output meters stay visible. In the **SST** tab,
+clear **Load recognizer on demand and unload after silence** to load at call
+startup and keep the model warm after **Stop**. The tab also controls pause timing
+and interruption. Click **Save SST settings** to use the selected recognizer and
+timing for the next call and across restarts.
+On first run the window uses the
 existing bundle's saved chat settings when available. Run
 `.\scripts\setup-barge-in.ps1` once for speaker echo cancellation with the portable
-Windows bundle. The **Settings** tab can turn interruptions off.
+Windows bundle. The **SST** tab can turn interruptions off or require
+estimated RAM checks before speech work starts.
 
-In **TTS**, choose the English 18M REFL or 7M REFL model, select a compatible voice,
-and click **Speak preview**. Click **Use for Kindroid calls** to save the choice.
+Fluid Speech Pro also offers **CPU** and **GPU (Vulkan)** in **SST → Recognition
+device**. The GPU option uses the optional local Windows Vulkan bundle.
+See [Fluid Speech Pro on Vulkan](docs/operations.md#fluid-speech-pro-on-vulkan).
+
+In **TTS**, choose the English 18M REFL or 7M REFL model, a compatible voice,
+and a **Synthesis device**. **Speak preview** uses the current selection. Click
+**Save TTS settings** to use it for calls and across restarts. The tab shows
+the saved call voice and device alongside any unsaved changes. See the
+[CUDA setup and per-model readings](docs/operations.md#pocket-tts-on-cuda).
 In **Voice cloning**, import recordings, choose one to eight clips, and click
 **Clone and save new preset**. Your clone appears in the 18M voice list.
 See [setup and operation](docs/operations.md) for the recording formats and storage paths.
+
+Click **Monitor** to open a separate window for CPU, GPU, RAM, loaded models,
+module activity, recent jobs, and per-turn call timings. In **Jevos**, choose
+**CPU (OpenVINO)** or **GPU (Vulkan)**, set the yes/no questions, and click
+**Save Jevos settings**. The independent **Enable Jevos decision scoring** switch
+can turn the workflow off while keeping the selected device. When enabled,
+the chat heatmap shows up to 100 scored samples from three-message windows. See
+[monitoring and Jevos](docs/operations.md#monitoring-and-jevos) for setup and timing definitions.
 
 ## Develop
 
 Read [AGENTS.md](AGENTS.md) and the [documentation map](docs/README.md). From PowerShell,
 run `.\scripts\test.ps1` for the offline tests. Add `-LocalModels` to also run synthetic
-inputs through the installed Parakeet and Pocket TTS adapters. The tests use an
+inputs through the installed Parakeet, Pocket TTS, and Jevos adapters. The tests use an
 offscreen Qt window and a loopback fixture for the Kindroid transport.
 
 Standalone STT experiments, MP3 export, Archive, and Relay remain in the original

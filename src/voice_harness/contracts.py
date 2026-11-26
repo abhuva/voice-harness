@@ -1,13 +1,19 @@
 """Data and capability contracts for the call workflow."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
-from typing import Protocol
+from typing import Literal, Protocol
+
+from .work_types import ArtifactRef
 
 
 class VoiceError(Exception):
     """An error message safe to show to the operator."""
+
+
+class MicrophoneDropout(VoiceError):
+    """The current utterance lost audio while the capture device stayed open."""
 
 
 class Cancellation(Protocol):
@@ -16,6 +22,7 @@ class Cancellation(Protocol):
 
 Stage = Callable[[str], None]
 Meter = Callable[[float, float], None]
+PRE_ROLL_SECONDS = 2
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,10 @@ class CallInput:
     paragraph: float = 2.0
     finish: float = 4.0
     interrupt: bool = True
+    stt_idle: int = 60
+    barge_in: float = 3.0
+    stt_on_demand: bool = True
+    stt_backend: Literal["cpu", "vulkan"] = "cpu"
 
 
 @dataclass(frozen=True)
@@ -56,13 +67,59 @@ class Recognizer(Protocol):
 class Speaker(Protocol):
     def prepare(self, stop: Cancellation) -> None: ...
     def speak(self, next_segment: Callable[[Cancellation], str | None],
-              stop: Cancellation, stage: Stage) -> None: ...
+              stop: Cancellation, stage: Stage, *,
+              first_audio: Callable[[float], None] | None = None) -> None: ...
     def close(self) -> None: ...
 
 
-class ReplyStream(Iterator[str], Protocol):
+@dataclass(frozen=True)
+class PCM:
+    rate: int
+    data: bytes
+
+
+class Synthesizer(Protocol):
+    def prepare(self, stop: Cancellation) -> None: ...
+    def render(self, text: str, stop: Cancellation) -> PCM | None: ...
+    def close(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class TurnRequest:
+    text: str
+    context: tuple[ArtifactRef, ...] = ()
+    read_context: Callable[[ArtifactRef], bytes] | None = None
+    on_submit: Callable[[float], None] | None = field(default=None, compare=False, repr=False)
+    on_first_text: Callable[[], None] | None = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class DeliveryConfirmed:
+    pass
+
+
+@dataclass(frozen=True)
+class ReplyText:
+    text: str
+
+
+@dataclass(frozen=True)
+class ReplyCompleted:
+    pass
+
+
+@dataclass(frozen=True)
+class ReplyFailed:
+    message: str
+    delivery: Literal["confirmed", "uncertain", "not_sent"] = "uncertain"
+
+
+ReplyEvent = DeliveryConfirmed | ReplyText | ReplyCompleted | ReplyFailed
+
+
+class ReplyStream(Iterator[ReplyEvent], Protocol):
     def close(self) -> None: ...
 
 
 class Provider(Protocol):
-    def send(self, message: str, stop: Cancellation) -> ReplyStream: ...
+    def send(self, request: TurnRequest, stop: Cancellation) -> ReplyStream: ...

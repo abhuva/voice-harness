@@ -37,7 +37,9 @@ process already supplies isolation at that boundary.
 ## Consequences
 
 The desktop can replace a speech or provider adapter without changing turn
-order. One foreground slot disallows overlapping speech jobs. Recognition
+order. One foreground slot disallows overlapping speech jobs.
+[ADR-004](004-scoped-work.md) adds independently admitted background work.
+Recognition
 continues in the current host, so cancellation may wait for native loading or
 decode to finish. Further platforms can reuse the workflow and its acceptance
 tests while supplying their own adapters.

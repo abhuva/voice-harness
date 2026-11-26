@@ -10,12 +10,13 @@ from .contracts import VoiceError
 
 
 class ReferencedOutput:
-    def __init__(self, rate, reference, stop):
+    def __init__(self, rate, reference, stop, *, first_audio=None):
         import sounddevice as sd
 
         self._sd = sd
         self._rate = rate
         self._reference = reference
+        self._first_audio = first_audio
         self._stop = stop
         self._frames = Queue(maxsize=2)
         self._end = Event()
@@ -45,7 +46,11 @@ class ReferencedOutput:
         output[:] = block if block is not None else self._silence
         if block is not None:
             at = time.monotonic() + timing.outputBufferDacTime - timing.currentTime
-            self._reference.add(block, self._rate, at)
+            if self._reference is not None:
+                self._reference.add(block, self._rate, at)
+            if self._first_audio is not None and not cancel and np.any(np.frombuffer(block, dtype="<f4")):
+                self._first_audio(at)
+                self._first_audio = None
             self._last = float(np.frombuffer(block, dtype="<f4")[-1])
         else:
             self._last = 0.0

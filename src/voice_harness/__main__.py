@@ -33,15 +33,19 @@ def main():
             lock.setStaleLockTime(0)
             if not lock.tryLock():
                 raise VoiceError("A voice window is already using this state or speech bundle.")
-        window = Window(settings, Harness(State(settings.local)))
+        harness = Harness(State(settings.local))
+        window = Window(settings, harness)
     except (OSError, StateError, VoiceError) as exc:
         error = str(exc) if isinstance(exc, VoiceError) else "Could not open the local voice state or bundle."
         QMessageBox.critical(None, "Voice Harness", error)
         return 1
 
-    window.show()
-    window.start_history()
-    return app.exec()
+    try:
+        window.show()
+        window.start_history()
+        return app.exec()
+    finally:
+        harness.models.evict_idle()
 
 
 if __name__ == "__main__":

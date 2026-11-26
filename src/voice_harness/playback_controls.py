@@ -1,13 +1,11 @@
 """Keyboard-accessible controls for the desktop output path."""
 
-from dataclasses import replace
-
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QFormLayout, QHBoxLayout, QLabel, QSlider, QToolButton, QVBoxLayout, QWidget,
+    QCheckBox, QFormLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget,
 )
 
-from .presets import EQ_LIMIT, TEMPO_MAX, TEMPO_MIN
+from .presets import EQ_LIMIT, TEMPO_MAX, TEMPO_MIN, OutputSettings
 
 
 class PlaybackControls(QWidget):
@@ -35,6 +33,8 @@ class PlaybackControls(QWidget):
         self.mute = QCheckBox("Mute playback")
         self.mute.toggled.connect(lambda _checked: self.changed.emit())
         form.addRow(self.mute)
+        self.save = QPushButton("Save &playback settings")
+        form.addRow(self.save)
         self.toggle.toggled.connect(self.show_details)
         self.show_details(False)
 
@@ -69,16 +69,18 @@ class PlaybackControls(QWidget):
         form.addRow(name, row)
         return slider
 
-    def apply_to(self, settings):
+    def settings(self):
         bass, mid, treble = (slider.value() for slider in self.bands)
-        speed = 0 if self.mute.isChecked() else self.speed.value() / 100
-        return replace(settings, speed=speed, bass=bass, mid=mid, treble=treble)
+        return OutputSettings(self.speed.value() / 100, bass, mid, treble, self.mute.isChecked())
+
+    def apply_to(self, voice):
+        return self.settings().apply_to(voice)
 
     def load(self, settings):
         self.blockSignals(True)
         try:
-            self.mute.setChecked(settings.speed == 0)
-            self.speed.setValue(round((settings.speed or 1) * 100))
+            self.mute.setChecked(settings.muted)
+            self.speed.setValue(round(settings.speed * 100))
             for slider, gain in zip(self.bands, (settings.bass, settings.mid, settings.treble)):
                 slider.setValue(gain)
         finally:

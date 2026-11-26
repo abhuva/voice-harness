@@ -11,6 +11,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QTabWidget
 
 from voice_harness.contracts import Message, VoiceError
+from voice_harness.decisions import CAPABILITY
 from voice_harness.harness import Harness, Outcome
 from voice_harness.presets import Recipe
 from voice_harness.settings import Settings
@@ -90,6 +91,209 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(self.window.progress.isVisible())
         self.assertTrue(self.window.start.isEnabled())
 
+    def test_memory_guard_setting_applies_to_the_next_job(self):
+        self.assertFalse(self.window.strict_memory.isChecked())
+        self.window.findChild(QTabWidget).setCurrentIndex(1)
+        self.assertTrue(self.window.strict_memory.isVisible())
+        self.window.strict_memory.setChecked(True)
+        self.window.save.click()
+        self.assertTrue(self.settings.load_sst()[1])
+        with patch("voice_harness.window.CallOperation", return_value=lambda *_: "Call ended."):
+            self.window.start.click()
+            self.assertIsNotNone(self.window.worker)
+            self.assertTrue(self.window.worker.job.strict_memory)
+            self.wait_for(lambda: self.window.worker is None)
+        self.assertTrue(self.window.strict_memory.isEnabled())
+
+    def test_sst_residency_toggle_saves_and_applies_to_next_call(self):
+        tabs = self.window.findChild(QTabWidget)
+        self.assertEqual(tabs.tabText(1), "SST")
+        tabs.setCurrentIndex(1)
+        controls = self.window.dictation
+        self.assertTrue(controls.stt_on_demand.isChecked())
+        self.assertTrue(controls.stt_idle.isEnabled())
+        controls.stt_idle.setValue(42)
+        controls.stt_on_demand.setChecked(False)
+        self.assertFalse(controls.stt_idle.isEnabled())
+        with patch.object(self.window.harness.models, "set_recognition_idle") as apply_idle:
+            self.window.save.click()
+            apply_idle.assert_called_once_with(None)
+        saved, _ = self.settings.load_sst()
+        self.assertFalse(saved.stt_on_demand)
+        self.assertEqual(saved.stt_idle, 42)
+
+        with patch("voice_harness.window.CallOperation", return_value=lambda *_: "Call ended.") as call:
+            self.window.start.click()
+            self.assertFalse(call.call_args.args[1].stt_on_demand)
+            self.assertFalse(self.window.worker.job.recognition_on_demand)
+            self.assertIn("resident STT", self.window.worker.job.profile.basis)
+            self.wait_for(lambda: self.window.worker is None)
+            controls.stt_on_demand.setChecked(True)
+            self.assertTrue(controls.stt_idle.isEnabled())
+            self.assertEqual(controls.stt_idle.value(), 42)
+            self.assertIn("Unsaved SST changes", self.window.sst_status.text())
+            self.window.start.click()
+            self.assertFalse(call.call_args.args[1].stt_on_demand)
+            self.wait_for(lambda: self.window.worker is None)
+            self.window.save.click()
+            self.window.start.click()
+            self.assertTrue(call.call_args.args[1].stt_on_demand)
+            self.assertTrue(self.window.worker.job.recognition_on_demand)
+            self.assertIn("on-demand STT", self.window.worker.job.profile.basis)
+            self.wait_for(lambda: self.window.worker is None)
+
+    def test_fluid_device_choice_persists_and_selects_the_next_call(self):
+        controls = self.window.dictation
+        self.assertFalse(controls.stt_backend.isEnabled())
+        controls.model.setCurrentIndex(controls.model.findData("fluid-speech-pro"))
+        self.assertTrue(controls.stt_backend.isEnabled())
+        self.assertEqual(controls.stt_backend.currentData(), "cpu")
+        controls.stt_backend.setCurrentIndex(controls.stt_backend.findData("vulkan"))
+        self.window.save.click()
+        self.assertEqual(self.settings.load_sst()[0].stt_backend, "vulkan")
+        with patch("voice_harness.window.CallOperation", return_value=lambda *_: "Call ended.") as call:
+            self.window.start.click()
+            self.assertEqual(call.call_args.args[1].stt_backend, "vulkan")
+            self.assertEqual(self.window.worker.job.models[0].configuration[-1], "vulkan")
+            self.wait_for(lambda: self.window.worker is None)
+            controls.stt_backend.setCurrentIndex(controls.stt_backend.findData("cpu"))
+            self.window.save.click()
+            self.window.start.click()
+            self.assertEqual(call.call_args.args[1].stt_backend, "cpu")
+            self.assertEqual(self.window.worker.job.models[0].configuration[-1], "cpu")
+            self.wait_for(lambda: self.window.worker is None)
+        controls.model.setCurrentIndex(controls.model.findData("german"))
+        self.assertFalse(controls.stt_backend.isEnabled())
+        self.assertEqual(controls.settings().stt_backend, "cpu")
+
+    def test_tts_device_applies_to_preview_and_saved_call_voice(self):
+        self.assertEqual(self.window.tts.backend.currentData(), "cpu")
+        self.window.tts.backend.setCurrentIndex(self.window.tts.backend.findData("cuda"))
+        self.assertIn("Unsaved TTS changes", self.window.tts.active.text())
+        self.assertIn("CPU", self.window.tts.active.text())
+        with patch("voice_harness.window.preview_voice", return_value="Fixture preview.") as preview:
+            self.window.start_preview()
+            self.wait_for(lambda: self.window.worker is None)
+            self.assertEqual(preview.call_args.args[1].backend, "cuda")
+            self.assertIs(preview.call_args.args[0], self.settings.synthesis)
+
+        with patch("voice_harness.window.CallOperation", return_value=lambda *_: "Call ended.") as call:
+            self.window.save.click()
+            self.assertEqual(self.settings.load_tts().backend, "cpu")
+            with patch.object(self.settings, "save_tts", side_effect=OSError):
+                self.window.tts.save.click()
+            self.assertIn("Could not save TTS settings", self.window.status.text())
+            self.window.start.click()
+            self.assertEqual(call.call_args.args[2].backend, "cpu")
+            self.wait_for(lambda: self.window.worker is None)
+            self.window.tts.save.click()
+            self.assertEqual(self.settings.load_tts().backend, "cuda")
+            self.assertIn("GPU (CUDA)", self.window.tts.active.text())
+            self.assertNotIn("Unsaved", self.window.tts.active.text())
+            self.window.close()
+            self.window = Window(self.settings, Harness(State(self.settings.local)))
+            self.window.start.click()
+            self.assertEqual(call.call_args.args[2].backend, "cuda")
+            self.assertEqual(self.window.worker.job.models[-1].configuration[-1], "cuda")
+            self.wait_for(lambda: self.window.worker is None)
+        self.window.tts.backend.setCurrentIndex(self.window.tts.backend.findData("cpu"))
+        self.window.tts.save.click()
+        self.assertEqual(self.settings.load_tts().backend, "cpu")
+
+    def test_playback_and_model_tabs_save_independent_changes(self):
+        self.window.playback.speed.setValue(112)
+        self.window.playback.mute.setChecked(True)
+        self.window.dictation.threads.setValue(2)
+        self.window.tts.backend.setCurrentIndex(self.window.tts.backend.findData("cuda"))
+        self.window.tts.save.click()
+        self.assertFalse(self.settings.load_output().muted)
+        self.assertEqual(self.settings.load_sst()[0].threads, 4)
+        self.window.save.click()
+        self.assertEqual(self.settings.load_sst()[0].threads, 2)
+        self.assertFalse(self.settings.load_output().muted)
+        self.window.playback.save.click()
+        self.assertEqual(self.settings.load_tts().backend, "cuda")
+        self.window.close()
+        self.window = Window(self.settings, Harness(State(self.settings.local)))
+        self.assertTrue(self.window.playback.mute.isChecked())
+        self.assertEqual(self.window.playback.speed.value(), 112)
+        self.assertEqual(self.window.dictation.threads.value(), 2)
+        self.assertEqual(self.window.tts.backend.currentData(), "cuda")
+
+    def test_save_disables_jevos_during_a_call_and_across_restart(self):
+        controls = self.window.decision_controls
+        bundle = Path(controls.directory.text())
+        (bundle / "model").mkdir(parents=True)
+        (bundle / "model/openvino_model.xml").touch()
+        (bundle / "jev.exe").touch()
+        controls.enabled.setChecked(True)
+        controls.save.click()
+        self.assertTrue(self.window.decision_poll.isActive())
+        self.assertTrue(self.window.heatmap.isVisible())
+        release = Event()
+
+        def operation(worker, stop):
+            if not release.wait(2):
+                return "Fixture timed out"
+            for number in range(3):
+                message = Message(str(number), "Hannah", f"Reply {number}")
+                worker.message.emit(message)
+                worker.completed_message.emit(worker.job.id, message)
+            return "Call ended."
+
+        with patch("voice_harness.window.CallOperation", return_value=operation), \
+                patch.object(self.window.decisions, "observe") as observe, \
+                patch.object(self.window.decisions.history, "latest") as latest:
+            self.window.start.click()
+            controls.questions.clear()
+            controls.enabled.setChecked(False)
+            controls.save.click()
+            self.assertEqual(self.window.decision_status.text(), "Jevos disabled")
+            self.assertFalse(self.window.decision_poll.isActive())
+            self.assertFalse(self.window.heatmap.isVisible())
+            release.set()
+            self.wait_for(lambda: self.window.worker is None)
+            self.assertEqual(self.window.status.text(), "Call ended.")
+            self.assertEqual(self.window.chat_view.entries["2"][2].text(), "Reply 2")
+            observe.assert_not_called()
+            latest.assert_not_called()
+        self.assertFalse(any(row[1] == CAPABILITY for row in self.window.harness.queue.recent()))
+
+        self.window.close()
+        with patch("voice_harness.decisions.installation") as installation:
+            restarted = Window(self.settings, Harness(State(self.settings.local)))
+            self.addCleanup(restarted.close)
+            self.assertFalse(restarted.decision_controls.enabled.isChecked())
+            self.assertTrue(restarted.decision_controls.questions.toPlainText())
+            self.assertFalse(restarted.decision_poll.isActive())
+            installation.assert_not_called()
+
+    def test_jevos_gpu_device_saves_independently_of_enablement(self):
+        controls = self.window.decision_controls
+        self.assertFalse(controls.enabled.isChecked())
+        self.assertTrue(controls.backend.isEnabled())
+        controls.backend.setCurrentIndex(controls.backend.findData("vulkan"))
+        controls.save.click()
+        self.assertFalse(self.window.decisions.settings.enabled)
+        self.assertEqual(self.window.decisions.settings.backend, "vulkan")
+        self.assertFalse(self.window.decision_poll.isActive())
+        self.window.close()
+        self.window = Window(self.settings, Harness(State(self.settings.local)))
+        controls = self.window.decision_controls
+        self.assertEqual(controls.backend.currentData(), "vulkan")
+        self.assertFalse(controls.enabled.isChecked())
+        self.assertIn("Off · GPU (Vulkan)", controls.status.text())
+        controls.enabled.setChecked(True)
+        with patch("voice_harness.decisions.vulkan_installation") as validate:
+            controls.save.click()
+            validate.assert_called_once_with(self.window.decisions.vulkan_directory)
+        self.assertTrue(self.window.decisions.settings.enabled)
+        self.assertTrue(self.window.decision_poll.isActive())
+        controls.enabled.setChecked(False)
+        controls.save.click()
+        self.assertEqual(self.window.decisions.settings.backend, "vulkan")
+        self.assertFalse(self.window.decision_poll.isActive())
+
     def test_clone_progress_and_explicit_tts_selection(self):
         release = Event()
         ident = "c" * 32
@@ -123,8 +327,8 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.tts.settings().preset, ident)
         self.assertEqual(self.window.voice.preset, "alba")
         self.window.findChild(QTabWidget).setCurrentWidget(self.window.tts)
-        self.window.tts.use.click()
-        self.assertEqual(self.settings.load()[1].preset, ident)
+        self.window.tts.save.click()
+        self.assertEqual(self.settings.load_tts().preset, ident)
         self.window.tts.model.setCurrentIndex(self.window.tts.model.findData("7m"))
         self.assertEqual(self.window.tts.voice.count(), 1)
         self.assertEqual(self.window.tts.settings().preset, "alba")
@@ -138,7 +342,7 @@ class WindowTests(unittest.TestCase):
             self.wait_for(lambda: self.window.worker is None)
             run.assert_called_once()
         self.assertEqual(self.window.status.text(), "Voice preview finished.")
-        self.assertEqual(self.settings.load()[1].preset, ident)
+        self.assertEqual(self.settings.load_tts().preset, ident)
 
     def test_uncertain_delivery_pauses_call_across_window_restart(self):
         def operation(worker, stop):

@@ -30,5 +30,7 @@ toolchain adds integration cost while capability boundaries are still being test
 A small worker protocol leaves room to move a measured bottleneck into Rust.
 
 The initial Windows code uses PyQt6, Qt networking and requests, and Python
-threads. The [implementation review](review.md) records those choices and what
-remains to prove. The stack proposal guides future work as requirements emerge.
+threads. It uses SQLite WAL, a filesystem catalog, independent process
+sampling, a uv lockfile, and Windows and Linux headless contract tests.
+The [implementation review](review.md) records the current choices and
+platform acceptance limits.

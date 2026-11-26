@@ -2,6 +2,8 @@
 
 from collections import deque
 
+from .contracts import PRE_ROLL_SECONDS
+
 
 class PauseChunks:
     # 100 ms microphone blocks. Bound the work of one decode even without pauses.
@@ -12,7 +14,7 @@ class PauseChunks:
         self.paragraph_blocks = round(paragraph_seconds * 10)
         self.paragraph = 0
         self.submit = submit
-        self.preroll = deque(maxlen=3)
+        self.preroll = deque(maxlen=PRE_ROLL_SECONDS * 10)
         self.frames = []
         self.quiet = 0
 
@@ -29,7 +31,7 @@ class PauseChunks:
                 self.preroll.append(block)
                 return
             self.frames.extend(self.preroll)
-            self.preroll.clear()
+            self.preroll = deque(maxlen=3)
         self.frames.append(block)
         if self.quiet >= self.pause_blocks or len(self.frames) >= self.max_blocks:
             self.flush()

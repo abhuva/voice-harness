@@ -10,17 +10,43 @@ import numpy as np
 import soundfile as sf
 
 from voice_harness.cloning import clone_voice
+from voice_harness.contracts import CallInput, Message, VoiceError
+from voice_harness.jevos import Jevos, installation
+from voice_harness.events import EventBus
 from voice_harness.encoder import PocketEncoder
 from voice_harness.engine import ResidentEngine
 from voice_harness.presets import Playback, Recipe, VoiceLibrary
-from voice_harness.recognizer import DictateRecognizer
+from voice_harness.recognizer import DictateRecognizer, recognition_key
+from voice_harness.residency import ModelResidency
 from voice_harness.resources import resident_sample
 from voice_harness.speaker import PocketSpeaker
 from voice_harness.voice_jobs import preview_voice
+from voice_harness.harness import Harness
+from voice_harness.state import State
+from voice_harness.synthesis import SynthesisFactory
 
 
 @unittest.skipUnless(os.environ.get("VOICE_HARNESS_MODEL_FIXTURE"), "requires -LocalModels")
 class LocalModelTests(unittest.TestCase):
+    def test_installed_jevos_scores_three_full_synthetic_messages(self):
+        directory = Path(os.environ["VOICE_HARNESS_MODEL_FIXTURE"]) / "archive-models/jevos-v5-openvino-int8-v1"
+        try:
+            installation(directory)
+        except VoiceError:
+            self.skipTest("requires the installed Jevos v5 OpenVINO CPU bundle")
+        stop = Event()
+        model = Jevos(directory, lambda _pid: None)
+        self.addCleanup(model.close)
+        model.prepare(stop)
+        messages = [
+            Message("1", "Person 1", "We're debugging a Python program.\n\nThe function crashes."),
+            Message("2", "Person 2", "Let's add a test for the error."),
+            Message("3", "Person 1", "Great, I'm happy the test found the bug."),
+        ]
+        scores = model.score(messages, ("Are they discussing programming?", "Are they eating?"), stop)
+        self.assertGreater(scores[0], scores[1])
+        self.assertTrue(all(0 <= score <= 1 for score in scores))
+
     def test_installed_stt_and_tts_process_synthetic_inputs_without_devices(self):
         bundle = Path(os.environ["VOICE_HARNESS_MODEL_FIXTURE"])
         recognizer = DictateRecognizer(bundle / "voice/dictate")
@@ -30,18 +56,27 @@ class LocalModelTests(unittest.TestCase):
         stop = Event()
         start, cpu_start = time.monotonic(), time.process_time()
         recognizer.select_model("multilingual", 2)
-        recognizer.prepare(stop)
-        self.assertIsInstance(recognizer.transcribe(np.zeros(16_000, dtype="int16")), str)
-        speaker.prepare(stop)
-        sample = resident_sample(start, cpu_start, speaker.engine.child.pid)
-        self.assertGreater(sample.host_bytes, 0)
-        self.assertGreater(sample.pocket_bytes, 0)
-        self.assertGreater(sample.pocket_cpu_seconds, 0)
-        pcm = speaker.engine.render("This is a local voice test.", stop)
-        samples = np.frombuffer(pcm, dtype="<f4")
-        self.assertGreater(len(samples), 2400)
-        self.assertTrue(np.isfinite(samples).all())
-        self.assertTrue(samples.any())
+        key = recognition_key(bundle / "voice/dictate", CallInput(threads=2))
+        events = EventBus()
+        models = ModelResidency(events)
+        self.addCleanup(models.evict_idle)
+        with events.subscribe(("model.unloaded",)) as notices:
+            with models.borrow(key, lambda: recognizer, stop, Mock(), None,
+                               expires_at=lambda: time.monotonic() + 0.1) as loaded:
+                self.assertIsInstance(loaded.transcribe(np.zeros(16_000, dtype="int16")), str)
+                speaker.prepare(stop)
+                sample = resident_sample(start, cpu_start, speaker.synthesis.engine.child.pid)
+                self.assertGreater(sample.host_bytes, 0)
+                self.assertGreater(sample.pocket_bytes, 0)
+                self.assertGreater(sample.pocket_cpu_seconds, 0)
+                pcm = speaker.synthesis.render("This is a local voice test.", stop)
+                samples = np.frombuffer(pcm.data, dtype="<f4")
+                self.assertGreater(len(samples), 2400)
+                self.assertTrue(np.isfinite(samples).all())
+                self.assertTrue(samples.any())
+            self.assertEqual(notices.get(timeout=4).model.capability, "stt")
+            self.assertFalse(recognizer.ready)
+            self.assertGreater(models.recognition_relief()[1], 0)
 
     def test_installed_clone_and_7m_engine_render_pcm(self):
         bundle = Path(os.environ["VOICE_HARNESS_MODEL_FIXTURE"]) / "pocket-tts/4.0.1"
@@ -64,11 +99,27 @@ class LocalModelTests(unittest.TestCase):
                 engine.unload()
 
         device = Mock()
-        worker = Mock()
-        with patch("sounddevice.RawOutputStream", return_value=device):
-            status = preview_voice(bundle, Playback("7m", "alba", 0.3),
-                                   "This uses the seven million model.", worker, stop)
-        self.assertEqual(status, "Voice preview finished.")
+        playback = Playback("7m", "alba", 0.3)
+        factory = SynthesisFactory(bundle)
+        key = factory.key(playback)
+        with TemporaryDirectory() as directory:
+            harness = Harness(State(Path(directory)))
+            worker = Mock(harness=harness)
+            try:
+                with harness.events.subscribe(("model.ready", "model.reused")) as updates:
+                    for _ in range(2):
+                        worker.job = harness.submit("Voice preview", models=(key,))
+                        device.reset_mock()
+                        with patch("sounddevice.RawOutputStream", return_value=device):
+                            status = harness.execute(worker.job, lambda token: preview_voice(
+                                factory, playback, "This uses the seven million model.", worker, token,
+                            ))
+                        self.assertEqual(status, "Voice preview finished.")
+                    loaded, reused = updates.get_nowait(), updates.get_nowait()
+                    self.assertEqual((loaded.kind, reused.kind), ("model.ready", "model.reused"))
+                    self.assertEqual(loaded.model.id, reused.model.id)
+            finally:
+                harness.models.evict_idle()
         worker.progress.emit.assert_called_with(1, 1, "preview segments queued for playback")
         device.stop.assert_called_once()
         device.close.assert_called_once()

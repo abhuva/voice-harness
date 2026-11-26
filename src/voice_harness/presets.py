@@ -17,6 +17,44 @@ _PRESET_ID = re.compile(r"[0-9a-f]{32}")
 
 
 @dataclass(frozen=True)
+class SynthesisSettings:
+    model: str = "18m"
+    preset: str = "alba"
+    temperature: float = 0.3
+    backend: str = "cpu"
+
+    @property
+    def synthesis_parameters(self):
+        return self.model, self.preset, self.temperature, self.backend
+
+
+@dataclass(frozen=True)
+class OutputSettings:
+    speed: float = 1.0
+    bass: int = 0
+    mid: int = 0
+    treble: int = 0
+    muted: bool = False
+
+    def validate(self):
+        if (type(self.speed) not in (float, int) or self.speed <= 0
+                or (self.speed not in SPEECH_SPEEDS and not (
+                    TEMPO_MIN / 100 <= self.speed <= TEMPO_MAX / 100 and self.speed == round(self.speed, 2)
+                ))):
+            raise VoiceError("Choose a speaking speed from 0.80× to 1.20×.")
+        if any(type(gain) is not int or not -EQ_LIMIT <= gain <= EQ_LIMIT
+               for gain in (self.bass, self.mid, self.treble)):
+            raise VoiceError("Choose EQ gains between −12 and +12 dB.")
+        if type(self.muted) is not bool:
+            raise VoiceError("Choose whether to mute playback.")
+        return self
+
+    def apply_to(self, voice):
+        return Playback(voice.model, voice.preset, voice.temperature, 0 if self.muted else self.speed,
+                        self.bass, self.mid, self.treble, backend=voice.backend)
+
+
+@dataclass(frozen=True)
 class Playback:
     model: str
     preset: str
@@ -25,10 +63,19 @@ class Playback:
     bass: int = 0
     mid: int = 0
     treble: int = 0
+    backend: str = "cpu"
 
     @property
     def synthesis_parameters(self):
-        return self.model, self.preset, self.temperature
+        return self.synthesis.synthesis_parameters
+
+    @property
+    def synthesis(self):
+        return SynthesisSettings(self.model, self.preset, self.temperature, self.backend)
+
+    @property
+    def output(self):
+        return OutputSettings(1.0 if self.speed == 0 else self.speed, self.bass, self.mid, self.treble, self.speed == 0)
 
 
 @dataclass(frozen=True)
@@ -95,22 +142,18 @@ class VoiceLibrary:
         if not self.preference.is_file():
             return Playback("18m", "original" if (self.root / "custom.safetensors").is_file() else "alba", 0.3)
         try:
-            settings = Playback(**json.loads(self.preference.read_text("utf-8")))
-            self.resolve(settings)
-            return settings
+            return Playback(**json.loads(self.preference.read_text("utf-8")))
         except (TypeError, ValueError, OSError):
             raise VoiceError("The existing chat voice settings could not be read.") from None
 
-    def resolve(self, settings):
-        speed = settings.speed
-        if speed not in SPEECH_SPEEDS and not (TEMPO_MIN / 100 <= speed <= TEMPO_MAX / 100
-                                               and speed == round(speed, 2)):
-            raise VoiceError("Choose a speaking speed from 0.80× to 1.20×.")
-        for gain in (settings.bass, settings.mid, settings.treble):
-            if type(gain) is not int or not -EQ_LIMIT <= gain <= EQ_LIMIT:
-                raise VoiceError("Choose EQ gains between −12 and +12 dB.")
-        if settings.model not in TTS_MODELS or not 0 <= settings.temperature <= 1:
+    def resolve(self, settings, *, check_assets=True):
+        if isinstance(settings, Playback):
+            settings.output.validate()
+        if (not isinstance(settings.model, str) or settings.model not in TTS_MODELS
+                or type(settings.temperature) not in (float, int) or not 0 <= settings.temperature <= 1):
             raise VoiceError("Choose a supported Pocket TTS model and temperature.")
+        if settings.backend not in ("cpu", "cuda"):
+            raise VoiceError("Choose CPU or GPU (CUDA) for Pocket TTS.")
         if settings.preset == "alba":
             suffix = "-7m" if settings.model == "7m" else ""
             return f"english{suffix}.yaml", f"alba{suffix}.safetensors"
@@ -122,6 +165,6 @@ class VoiceLibrary:
             voice = Path("presets") / settings.preset / "voice.safetensors"
         else:
             raise VoiceError("Choose an installed voice preset.")
-        if not (self.root / voice).is_file():
+        if check_assets and not (self.root / voice).is_file():
             raise VoiceError("The saved voice file is missing. Choose another preset.")
         return "cloning.yaml", str(voice)

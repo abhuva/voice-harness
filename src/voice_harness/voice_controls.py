@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from .presets import Playback, Recipe, RECORDING_EXTENSIONS, TTS_MODELS
+from .presets import Recipe, RECORDING_EXTENSIONS, SynthesisSettings, TTS_MODELS
 
 
 def temperature_input():
@@ -19,12 +19,13 @@ def temperature_input():
 
 class TtsControls(QWidget):
     preview_requested = pyqtSignal()
-    apply_requested = pyqtSignal()
+    save_requested = pyqtSignal()
 
     def __init__(self, library, recipes):
         super().__init__()
         self.library = library
         self.recipes = recipes
+        self.saved = SynthesisSettings()
         layout = QVBoxLayout(self)
         form = QFormLayout()
         layout.addLayout(form)
@@ -32,8 +33,12 @@ class TtsControls(QWidget):
         for ident, name in TTS_MODELS.items():
             self.model.addItem(name, ident)
         self.voice = QComboBox()
+        self.backend = QComboBox()
+        self.backend.addItem("CPU", "cpu")
+        self.backend.addItem("GPU (CUDA)", "cuda")
         self.temperature = temperature_input()
         form.addRow("TTS &model", self.model)
+        form.addRow("Synthesis &device", self.backend)
         form.addRow("&Voice preset", self.voice)
         form.addRow("&Temperature", self.temperature)
         self.model.currentIndexChanged.connect(self.model_changed)
@@ -46,13 +51,18 @@ class TtsControls(QWidget):
         self.preview = QPushButton("&Speak preview")
         self.preview.clicked.connect(self.preview_requested)
         layout.addWidget(self.preview)
-        self.use = QPushButton("&Use for Kindroid calls")
-        self.use.clicked.connect(self.apply_requested)
-        layout.addWidget(self.use)
+        self.save = QPushButton("&Save TTS settings")
+        self.save.clicked.connect(self.save_requested)
+        layout.addWidget(self.save)
         self.active = QLabel()
+        self.active.setAccessibleName("Saved TTS settings")
         self.active.setTextFormat(Qt.TextFormat.PlainText)
         self.active.setWordWrap(True)
         layout.addWidget(self.active)
+        self.model.currentIndexChanged.connect(self.update_active)
+        self.voice.currentIndexChanged.connect(self.update_active)
+        self.backend.currentIndexChanged.connect(self.update_active)
+        self.temperature.valueChanged.connect(self.update_active)
 
     def populate(self, preset):
         choices = self.library.voices(self.model.currentData(), self.recipes)
@@ -77,6 +87,7 @@ class TtsControls(QWidget):
         with QSignalBlocker(self.model):
             self.model.setCurrentIndex(self.model.findData(playback.model))
         self.populate(playback.preset)
+        self.backend.setCurrentIndex(self.backend.findData(playback.backend))
         self.temperature.setValue(playback.temperature)
 
     def select_clone(self, ident, recipes):
@@ -85,14 +96,25 @@ class TtsControls(QWidget):
             self.model.setCurrentIndex(self.model.findData("18m"))
         self.populate(ident)
         self.voice_changed()
+        self.update_active()
 
     def settings(self):
-        return Playback(self.model.currentData(), self.voice.currentData(), self.temperature.value())
+        return SynthesisSettings(self.model.currentData(), self.voice.currentData(), self.temperature.value(),
+                                 self.backend.currentData())
 
-    def show_active(self, playback):
-        choices = self.library.voices(playback.model, self.recipes)
-        voice = choices.get(playback.preset, ("Saved preset",))[0]
-        self.active.setText(f"Call voice · {TTS_MODELS[playback.model]} · {voice}")
+    def show_saved(self, settings):
+        self.saved = settings
+        self.update_active()
+
+    def update_active(self):
+        saved = self.saved
+        choices = self.library.voices(saved.model, self.recipes)
+        voice = choices.get(saved.preset, ("Saved preset",))[0]
+        device = self.backend.itemText(self.backend.findData(saved.backend))
+        message = f"Saved for calls · {TTS_MODELS[saved.model]} · {voice} · {device}"
+        if self.settings() != saved:
+            message += "\nUnsaved TTS changes"
+        self.active.setText(message)
 
 
 class CloningControls(QWidget):

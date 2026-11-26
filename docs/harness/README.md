@@ -102,5 +102,5 @@ can use without rewriting the call sequence. A local dispatcher and a synthetic
 saved result can test this before a real decision model, research worker, or
 proactive follow-up policy is in scope.
 
-See the [stack proposal](stack.md), [implementation review](review.md), and
-[current voice runtime](../architecture.md).
+See the [architecture diagrams](diagrams.md), [stack proposal](stack.md),
+[implementation review](review.md), and [current voice runtime](../architecture.md).
