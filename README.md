@@ -1,5 +1,7 @@
 # Voice Harness
 
+[Read the Voice Harness documentation](https://abhuva.github.io/voice-harness/)
+
 A local Windows desktop app for talking to a Kindroid. It transcribes your microphone
 with local Dictate models, sends the completed text turn to Kindroid, and plays the
 streamed reply with local Pocket TTS. The chat window shows both sides as they arrive.
