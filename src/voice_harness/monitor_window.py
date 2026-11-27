@@ -50,7 +50,9 @@ def model_text(key):
         return f"{STT_MODELS.get(key.configuration[1], key.configuration[1])} · {device}"
     if key.kind == "tts":
         device = "GPU (CUDA)" if key.configuration[-1] == "cuda" else "CPU"
-        return f"Pocket TTS {key.configuration[1].upper()} REFL · {device}"
+        model = key.configuration[1]
+        label = "Silencio-2 English" if model == "silencio2" else f"Pocket TTS {model.upper()} REFL"
+        return f"{label} · {device}"
     return VULKAN_LABEL if key.configuration[-1] == "vulkan" else "Jevos v5 OpenVINO INT8 · CPU"
 
 

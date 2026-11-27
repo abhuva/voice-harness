@@ -28,6 +28,36 @@ from voice_harness.synthesis import SynthesisFactory
 
 @unittest.skipUnless(os.environ.get("VOICE_HARNESS_MODEL_FIXTURE"), "requires -LocalModels")
 class LocalModelTests(unittest.TestCase):
+    def test_silencio_renders_tags_with_bundled_and_existing_clone_presets(self):
+        assets = Path(os.environ["VOICE_HARNESS_MODEL_FIXTURE"])
+        model_dir = assets / "silencio-2"
+        if not (model_dir / "model.safetensors").is_file():
+            self.skipTest("requires scripts/setup-silencio.ps1")
+        stop = Event()
+        pocket = assets / "pocket-tts/4.0.1"
+        with TemporaryDirectory(prefix=".silencio-test-", dir=pocket) as directory:
+            library = VoiceLibrary(Path(directory))
+            library.samples.mkdir()
+            sample_rate = 24_000
+            samples = np.arange(sample_rate * 5) / sample_rate
+            sf.write(library.samples / "fixture.wav", 0.2 * np.sin(2 * np.pi * 180 * samples), sample_rate)
+            ident = clone_voice(library, PocketEncoder(pocket),
+                                Recipe("Synthetic fixture", ("fixture.wav",), seconds=4), stop, Mock(), Mock())
+            factory = SynthesisFactory(library.root, assets / "pocket-cuda/v4.0.1", model_dir)
+            for preset, text in (("260", "[laugh]"), (ident, "<sad> What a long day. [sigh]")):
+                with self.subTest(preset=preset):
+                    synth = factory.create(Playback("silencio2", preset, 0.3), process_started=None)
+                    try:
+                        synth.prepare(stop)
+                        pcm = synth.render(text, stop)
+                        self.assertEqual(pcm.rate, sample_rate)
+                        samples = np.frombuffer(pcm.data, dtype="<f4")
+                        self.assertGreater(len(samples), 2400)
+                        self.assertTrue(np.isfinite(samples).all())
+                        self.assertGreater(np.max(np.abs(samples)), 0.001)
+                    finally:
+                        synth.close()
+
     def test_installed_jevos_scores_three_full_synthetic_messages(self):
         directory = Path(os.environ["VOICE_HARNESS_MODEL_FIXTURE"]) / "archive-models/jevos-v5-openvino-int8-v1"
         try:

@@ -30,7 +30,7 @@ def _read_packets(pipe, packets):
         packets.put((b"X", b""))
 
 
-def cuda_command(runtime):
+def cuda_command(runtime, *, silencio=False):
     if runtime is not None:
         try:
             values = (line.split("=", 1) for line in (runtime / "pyvenv.cfg").read_text("utf-8").splitlines()
@@ -44,6 +44,8 @@ def cuda_command(runtime):
                 return [str(python), "-I", "-S", "-u", str(worker), str(site.resolve())]
         except (OSError, KeyError, UnicodeError):
             pass
+    if silencio:
+        raise VoiceError("Install the Silencio-2 runtime with scripts/setup-silencio.ps1.")
     raise VoiceError("Install Pocket TTS CUDA with scripts/setup-pocket-cuda.ps1, or select CPU in TTS.")
 
 
@@ -56,10 +58,11 @@ class ResidentEngine:
         self.reader = None
         self.settings = None
         self.rate = 0
+        self.name = "Pocket TTS"
 
     def require_on(self):
         if self.child is None or self.child.poll() is not None:
-            raise VoiceError("Pocket TTS is not ready. Start the call again.")
+            raise VoiceError(f"{self.name} is not ready. Start the call again.")
 
     def unload(self):
         child = self.child
@@ -90,13 +93,13 @@ class ResidentEngine:
             except Empty:
                 continue
             if tag == b"X":
-                raise VoiceError("The Pocket TTS process exited. Start the call again.")
+                raise VoiceError(f"The {self.name} process exited. Start the call again.")
             if cancelled or tag == b"C":
                 return None
             if tag != (b"R" if loading else b"A") or not payload or len(payload) % 4:
-                raise VoiceError("Pocket TTS returned an invalid audio packet.")
+                raise VoiceError(f"{self.name} returned an invalid audio packet.")
             return payload
-        raise VoiceError("Pocket TTS timed out. Start the call again.")
+        raise VoiceError(f"{self.name} timed out. Start the call again.")
 
     def load(self, settings, config, profile, stop):
         if (self.settings and self.settings.synthesis_parameters == settings.synthesis_parameters
@@ -106,9 +109,14 @@ class ResidentEngine:
         if stop.is_set():
             return
         cuda = settings.backend == "cuda"
+        silencio = settings.model == "silencio2"
+        self.name = "Silencio-2" if silencio else "Pocket TTS"
+        args = [config, profile, str(settings.temperature)]
         env = None
-        if cuda:
-            command = cuda_command(self.cuda_runtime)
+        if cuda or silencio:
+            command = cuda_command(self.cuda_runtime, silencio=silencio)
+            if silencio:
+                args += ["silencio2", settings.backend]
             env = {key: os.environ[key] for key in ("SystemRoot", "WINDIR", "PATH", "TEMP", "TMP", "LOCALAPPDATA")
                    if key in os.environ}
             env["HF_HUB_OFFLINE"] = "1"
@@ -117,7 +125,7 @@ class ResidentEngine:
         process_started, self.process_started = self.process_started, None
         try:
             self.child = subprocess.Popen(
-                [*command, config, profile, str(settings.temperature)],
+                [*command, *args],
                 cwd=self.directory, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, env=env, creationflags=subprocess.CREATE_NO_WINDOW,
             )
@@ -130,11 +138,13 @@ class ResidentEngine:
             if packet is None:
                 return
             if len(packet) != 4 or int.from_bytes(packet, "little") != 24000:
-                raise VoiceError("Unexpected Pocket TTS sample rate.")
+                raise VoiceError(f"Unexpected {self.name} sample rate.")
             self.rate = 24000
             self.settings = settings
         except (OSError, VoiceError) as exc:
             self.unload()
+            if silencio and not stop.is_set():
+                raise VoiceError("Silencio-2 could not load. Check its local installation, voice and device.") from None
             if cuda and not stop.is_set():
                 raise VoiceError("Pocket TTS CUDA could not load. Check the GPU and free VRAM, or select CPU in TTS.") from None
             if isinstance(exc, VoiceError):
@@ -155,4 +165,4 @@ class ResidentEngine:
             self.unload()
             if isinstance(exc, VoiceError):
                 raise
-            raise VoiceError("Lost the Pocket TTS process. Start the call again.") from None
+            raise VoiceError(f"Lost the {self.name} process. Start the call again.") from None

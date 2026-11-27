@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from .contracts import VoiceError
 from .harness import Harness
 from .nodes import NodesPanel
+from .presets import TTS_MODELS
 from .recognizer import STT_MODELS
 from .settings import Settings
 from .state import State
@@ -75,7 +76,7 @@ def main():
         nodes = NodesPanel(
             phone.gateway if phone else None,
             lambda: (f"Call processing, local playback · {STT_MODELS[window.saved_call_input.model]}"
-                     f" · Pocket TTS {window.voice.model.upper()}"),
+                     f" · {TTS_MODELS[window.voice.model]}"),
             lambda: window.tabs.setCurrentIndex(phone_tab),
         )
         window.tabs.addTab(nodes, "Nodes")

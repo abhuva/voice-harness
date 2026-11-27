@@ -23,7 +23,7 @@ class Settings:
         self.dictate = assets / "voice/dictate"
         self.fluid_vulkan = self.local / FLUID_VULKAN_DIRECTORY
         self.pocket = assets / "pocket-tts/4.0.1"
-        self.synthesis = SynthesisFactory(self.pocket, self.local / "pocket-cuda/v4.0.1")
+        self.synthesis = SynthesisFactory(self.pocket, self.local / "pocket-cuda/v4.0.1", self.local / "silencio-2")
         self.history_guard = assets / "voice/history-next-read"
 
     def load_sst(self):

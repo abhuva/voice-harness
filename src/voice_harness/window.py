@@ -5,7 +5,8 @@ from functools import partial
 from socket import gethostname
 from sqlite3 import Error as StateError
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QProgressBar,
     QPushButton, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
@@ -315,6 +316,9 @@ class Window(QWidget):
             receiver_link = QLineEdit(f"{origin}/listen")
             receiver_link.setReadOnly(True)
             form.addRow("Playback receiver &link", receiver_link)
+            open_receiver = QPushButton("Open playback receiver")
+            open_receiver.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(receiver_link.text())))
+            form.addRow(open_receiver)
 
         output = QComboBox()
         output_status = QLabel("Applies to the next phone call.")

@@ -8,7 +8,9 @@ import re
 from .contracts import VoiceError
 
 
-TTS_MODELS = {"18m": "Pocket TTS English 18M REFL", "7m": "Pocket TTS English 7M REFL"}
+TTS_MODELS = {"18m": "Pocket TTS English 18M REFL", "7m": "Pocket TTS English 7M REFL",
+              "silencio2": "Silencio-2 English"}
+SILENCIO_VOICES = ("260", "1320", "2094", "3575", "5639", "6930", "7127", "7729")
 RECORDING_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg")
 SPEECH_SPEEDS = tuple(step / 4 for step in range(9))
 TEMPO_MIN, TEMPO_MAX = 80, 120
@@ -130,10 +132,12 @@ class VoiceLibrary:
         return result
 
     def voices(self, model, recipes):
-        choices = {"alba": ("Alba", 0.3)}
+        choices = ({ident: (f"Silencio voice {ident}", 0.3) for ident in SILENCIO_VOICES}
+                   if model == "silencio2" else {"alba": ("Alba", 0.3)})
         if model == "18m":
             if (self.root / "custom.safetensors").is_file():
                 choices["original"] = ("Original clone", 0.3)
+        if model in ("18m", "silencio2"):
             choices.update((ident, (f"{recipe.name} · {ident[:6]}", recipe.temperature))
                            for ident, recipe in recipes.items())
         return choices
@@ -151,9 +155,17 @@ class VoiceLibrary:
             settings.output.validate()
         if (not isinstance(settings.model, str) or settings.model not in TTS_MODELS
                 or type(settings.temperature) not in (float, int) or not 0 <= settings.temperature <= 1):
-            raise VoiceError("Choose a supported Pocket TTS model and temperature.")
+            raise VoiceError("Choose a supported TTS model and temperature.")
         if settings.backend not in ("cpu", "cuda"):
-            raise VoiceError("Choose CPU or GPU (CUDA) for Pocket TTS.")
+            raise VoiceError("Choose CPU or GPU (CUDA) for synthesis.")
+        if settings.model == "silencio2":
+            if settings.preset not in SILENCIO_VOICES and not (
+                isinstance(settings.preset, str) and _PRESET_ID.fullmatch(settings.preset)
+            ):
+                raise VoiceError("Choose a Silencio-2 voice or a clone with its source recordings.")
+            if check_assets and settings.preset not in SILENCIO_VOICES and settings.preset not in self.recipes():
+                raise VoiceError("The saved voice recipe is missing. Choose another preset.")
+            return "config.yaml", settings.preset
         if settings.preset == "alba":
             suffix = "-7m" if settings.model == "7m" else ""
             return f"english{suffix}.yaml", f"alba{suffix}.safetensors"

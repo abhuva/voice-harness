@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTa
 from voice_harness.contracts import Message, VoiceError
 from voice_harness.decisions import CAPABILITY
 from voice_harness.harness import Harness, Outcome
+from voice_harness.nodes import NodesPanel
 from voice_harness.phone_audio import PhoneAudio
 from voice_harness.phone_pairing import PhonePairing
 from voice_harness.presets import Recipe
@@ -162,6 +163,24 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(pairing.pin, "0420")
         self.assertEqual(link.text(), origin + "/#code=0420")
 
+    def test_nodes_opens_selected_host_playback_in_browser(self):
+        with patch.object(NodesPanel, "refresh"):
+            panel = NodesPanel(None, lambda: "Local processing", lambda: None)
+        self.addCleanup(panel.close_polling)
+        peer = {"HostName": "Office PC", "DNSName": "office-pc.example.ts.net.", "Online": True}
+        panel.nodes = [(False, peer)]
+        panel.tailnet_available = True
+        panel.render()
+        self.assertFalse(panel.open_playback.isEnabled())
+        panel.table.selectRow(0)
+        with patch("voice_harness.nodes.QDesktopServices.openUrl", return_value=True) as open_url:
+            panel.open_playback.click()
+            self.assertEqual(open_url.call_args.args[0].toString(), "https://office-pc.example.ts.net/listen")
+        peer["Online"] = False
+        panel.render()
+        self.assertEqual(panel.table.currentRow(), 0)
+        self.assertFalse(panel.open_playback.isEnabled())
+
     def test_phone_playback_destination_is_saved_and_applied_to_new_calls(self):
         self.window.enable_phone("http://127.0.0.1:8768", PhonePairing())
         page = self.window.tabs.widget(self.window.tabs.count() - 1)
@@ -185,6 +204,11 @@ class WindowTests(unittest.TestCase):
         gateway = SimpleNamespace(receivers=lambda: () if receiver.closed.is_set() else (receiver,),
                                   receiver=lambda key: receiver if key == ident else None)
         self.window.enable_phone("http://127.0.0.1:8768", PhonePairing(), gateway)
+        page = self.window.tabs.widget(self.window.tabs.count() - 1)
+        button = next(button for button in page.findChildren(QPushButton) if button.text() == "Open playback receiver")
+        with patch("voice_harness.window.QDesktopServices.openUrl", return_value=True) as open_url:
+            button.click()
+            self.assertEqual(open_url.call_args.args[0].toString(), "http://127.0.0.1:8768/listen")
         phone = PhoneAudio("rtc")
 
         def operation(_worker, stop):

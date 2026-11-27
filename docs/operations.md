@@ -223,8 +223,9 @@ Harness capabilities currently connected. A device can be online before it has
 a connected microphone or playback receiver. Phone capabilities appear when a
 phone call connects. The network's displayed online state comes from Tailscale.
 
-1. On the laptop or another tailnet device, open the **Playback receiver link**
-   from the host's **Phone** tab. It ends in `/listen`.
+1. On the laptop, open **Nodes**, select the work PC, and click **Open playback
+   receiver**. The host's **Phone** tab also has the button and a copyable link
+   ending in `/listen` for devices without the desktop app.
 2. Enter a device name, such as **Laptop**, and the PIN from the host's **Phone**
    tab. Click **Connect playback** and keep that browser page open.
 3. On the host, select that device under **Play phone call replies on**. Start
@@ -323,6 +324,25 @@ the selected device immediately. **Save TTS settings** saves the device and
 voice for the next call. Pick **CPU** any time between jobs to use the native
 playback worker. Switching devices replaces the resident TTS worker when the
 next preview or audible call starts. Recognition keeps its own device selection.
+
+## Silencio-2 expressive TTS
+
+Run `.\scripts\setup-silencio.ps1` after installing the Pocket TTS Python
+runtime. Choose **Silencio-2 English** in **TTS** for CPU or CUDA playback.
+The model is English-only. Try `What a long day. [sigh]` or `[laugh] That was
+unexpected.` in **Speak preview**. Supported sounds include `[gasp]`,
+`[cough]`, and `[clear_throat]`. An emotion tag such as `<whisper>` applies
+to the following text in that synthesis segment.
+
+Saved clone recipes appear in the Silencio-2 voice list. Silencio-2 conditions
+its own model from the recipe's original imported recordings on load.
+Keep the source clips in the recordings library. An older clone that only has
+a Pocket TTS state file can still be used with Pocket TTS 18M. Use source clips
+to create a recipe for that voice if you want to select it in Silencio-2.
+
+**Save TTS settings** selects Silencio-2 for subsequent calls. Expressive tags
+are rendered when present in the supplied text. The app does not add tags to
+Kindroid replies.
 
 ## Verification
 
