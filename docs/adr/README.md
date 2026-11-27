@@ -20,3 +20,4 @@ reviewed: 2026-11-26
 | [ADR-009 Selectable CUDA synthesis with model resource readings](009-pocket-tts-cuda.md) | Accepted |
 | [ADR-010 Scoped saves for speech settings](010-scoped-speech-settings.md) | Accepted |
 | [ADR-011 Selectable Vulkan backend for Jevos](011-jevos-vulkan.md) | Accepted |
+| [ADR-012 Phone audio over a private connection](012-phone-audio.md) | Accepted |

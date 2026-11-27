@@ -59,10 +59,11 @@ def call_profile(call_input, playback, synthesis):
 
 
 class CallOperation:
-    def __init__(self, settings, call_input, playback):
+    def __init__(self, settings, call_input, playback, *, phone=None):
         self.settings = settings
         self.call_input = call_input
         self.playback = playback
+        self.phone = phone
         self.speaker = None
 
     def tune(self, playback):
@@ -72,9 +73,12 @@ class CallOperation:
 
     def __call__(self, worker, stop):
         provider = KindroidClient(*self.settings.credentials())
-        reference = PlaybackReference()
-        enhancement = EchoProcessor(reference)
-        microphone = SpeechInput(WindowsMicrophone(), enhancement, worker.mic_level.emit)
+        if self.phone is None:
+            reference = PlaybackReference()
+            enhancement = EchoProcessor(reference)
+            microphone = SpeechInput(WindowsMicrophone(), enhancement, worker.mic_level.emit)
+        else:
+            microphone = self.phone.microphone(worker.mic_level.emit)
         harness, job = worker.harness, worker.job
         scope, stage = job.work.scope, worker.stage.emit
         vulkan = self.call_input.stt_backend == "vulkan"
@@ -110,7 +114,7 @@ class CallOperation:
         def ready():
             sample = harness.ready(job)
             details = sample.description() if sample is not None else ""
-            if self.call_input.interrupt and self.speaker is not None and not enhancement.available:
+            if self.phone is None and self.call_input.interrupt and self.speaker is not None and not enhancement.available:
                 details += "\nInstall the WebRTC audio package to interrupt during playback."
             worker.resources.emit(details)
 
@@ -141,9 +145,9 @@ class CallOperation:
                     if model is None:
                         return "Call stopped."
                     harness.watch_process(job, model.process_id, warm=True)
-                    self.speaker = SynthesizedSpeech(
-                        model, AudioPlayback(self.playback, worker.speaker_level.emit, reference=reference),
-                    )
+                    sink = (AudioPlayback(self.playback, worker.speaker_level.emit, reference=reference)
+                            if self.phone is None else self.phone.playback(self.playback, worker.speaker_level.emit))
+                    self.speaker = SynthesizedSpeech(model, sink)
                 run_call(microphone, recognize, self.speaker, provider, harness.state,
                          self.call_input, stop, stage, worker.message.emit, ready,
                          work=harness.call_work(job, cloud=True),

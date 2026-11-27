@@ -8,11 +8,13 @@ from unittest.mock import patch
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QTabWidget
+from PyQt6.QtWidgets import QApplication, QLineEdit, QPushButton, QTabWidget
 
 from voice_harness.contracts import Message, VoiceError
 from voice_harness.decisions import CAPABILITY
 from voice_harness.harness import Harness, Outcome
+from voice_harness.phone_audio import PhoneAudio
+from voice_harness.phone_pairing import PhonePairing
 from voice_harness.presets import Recipe
 from voice_harness.settings import Settings
 from voice_harness.state import State
@@ -104,6 +106,59 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(self.window.worker.job.strict_memory)
             self.wait_for(lambda: self.window.worker is None)
         self.assertTrue(self.window.strict_memory.isEnabled())
+
+    def test_phone_uses_desktop_call_slot_and_respects_delivery_guard(self):
+        self.window.enable_phone("http://127.0.0.1:8768", PhonePairing())
+        self.state.claim_delivery("prior")
+        refused = PhoneAudio("ptt")
+        self.window.phone_requested.emit(refused)
+        self.wait_for(refused.finished.is_set)
+        self.assertIn("unresolved", refused.events[-1]["text"])
+        self.state.clear_delivery("prior")
+
+        def operation(worker, stop):
+            worker.stage.emit("Fixture phone call")
+            stop.wait(2)
+            return "Done"
+
+        phone = PhoneAudio("rtc")
+        with patch("voice_harness.window.CallOperation", return_value=operation) as factory:
+            self.window.phone_requested.emit(phone)
+            self.wait_for(lambda: any(item.get("text") == "Fixture phone call" for item in phone.events))
+            self.assertIs(factory.call_args.kwargs["phone"], phone)
+            self.assertFalse(self.window.start.isEnabled())
+            self.assertEqual(self.window.worker.job.label, "Call")
+            duplicate = PhoneAudio("ptt")
+            self.window.phone_requested.emit(duplicate)
+            self.wait_for(duplicate.finished.is_set)
+            self.assertIn("busy", duplicate.events[-1]["text"])
+            phone.disconnect()
+            self.window.phone_disconnected.emit(phone)
+            self.wait_for(phone.finished.is_set)
+            self.wait_for(lambda: self.window.worker is None)
+        self.assertEqual(phone.events[-1]["text"], "Call stopped.")
+        self.assertTrue(self.window.start.isEnabled())
+
+    def test_phone_pairing_pin_can_be_edited(self):
+        pairing = PhonePairing()
+        origin = "http://127.0.0.1:8768"
+        self.window.enable_phone(origin, pairing)
+        page = self.window.tabs.widget(self.window.tabs.count() - 1)
+        pin, link = page.findChildren(QLineEdit)
+        apply = page.findChild(QPushButton)
+        original = pairing.pin
+        self.assertEqual(pin.text(), original)
+        self.assertFalse(pin.isReadOnly())
+
+        pin.setText("ABC")
+        apply.click()
+        self.assertEqual(pairing.pin, original)
+        self.assertTrue(link.text().endswith(original))
+
+        pin.setText("0420")
+        apply.click()
+        self.assertEqual(pairing.pin, "0420")
+        self.assertEqual(link.text(), origin + "/#code=0420")
 
     def test_sst_residency_toggle_saves_and_applies_to_next_call(self):
         tabs = self.window.findChild(QTabWidget)

@@ -203,6 +203,47 @@ SQLite retains 100 scored samples across launches. The scoring workflow keeps
 its message snapshots in memory and feeds the heatmap. Conversation replies
 continue through the existing Kindroid path.
 
+## Phone calls
+
+The phone supplies the microphone and plays the reply. The laptop runs the
+call, uses the saved SST and TTS choices, and contacts Kindroid. The phone page
+shows the current call and its messages. The laptop and phone share one call
+slot, and either can end the phone call. Unmute **Playback** on the laptop
+to hear replies on the phone.
+
+1. Put the laptop and phone on your Tailscale network. Keep the laptop awake
+   with Voice Harness running while using the phone.
+2. Install the optional runtime once from the repository with
+   `.\scripts\setup-phone.ps1`. This uses uv and CPython 3.13.
+3. In an administrator PowerShell window, run `tailscale serve 8768`.
+   Leave it running and copy the private HTTPS address it prints.
+   [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
+4. Restart Voice Harness from a regular PowerShell window with
+   `.\scripts\start.ps1 -Phone -PhoneOrigin 'https://your-laptop.your-tailnet.ts.net'`.
+   Open the URL shown on the desktop **Phone** tab, or open the plain HTTPS
+   address and enter the six-digit **Pairing PIN** shown there. To choose your
+   own, enter 4 to 8 digits in the laptop’s **Phone** tab and click **Set pairing PIN**.
+   The pairing link updates immediately. Restarting Voice Harness generates a new PIN.
+5. Choose a mode, tap **Start call**, and grant microphone access. In
+   **Push to talk**, hold the talk button and release to submit. In
+   **Hands-free · WebRTC**, speak and pause as you would at the laptop.
+   Use **End call** when finished.
+
+Push-to-talk streams the reply over the same secure connection that carries
+the phone controls. WebRTC uses the HTTPS connection for setup and a separate
+UDP audio connection over Tailscale. The launcher discovers the laptop's
+Tailscale IPv4 address when it can run `tailscale ip -4`. Supply
+`-PhoneIceAddress` with that address if discovery is unavailable. WebRTC
+requires the phone to reach the laptop on UDP through the tailnet and host
+firewall. Push-to-talk also works when the network only allows HTTPS.
+
+Keep the browser page in the foreground during the first phone test. WebRTC
+uses the phone browser's echo cancellation. Tap **Play reply audio** if the
+browser asks you to start playback. The laptop preserves unresolved send
+claims when the connection drops and displays its usual delivery check.
+For a same-laptop test, launch with `-Phone` and open the loopback address in
+the **Phone** tab.
+
 ## TTS and voice cloning
 
 1. In **Voice cloning**, click **Import audio files…** and select WAV, MP3, FLAC,
@@ -280,6 +321,11 @@ After Jevos Vulkan setup, run
 and GPU scores on synthetic messages. Check **Models** for the Jevos worker's
 host working set and dedicated VRAM while it is warm.
 
+After phone runtime setup, run `.\scripts\test.ps1 -Pattern test_phone.py`.
+The fixture checks pairing, a single phone session, push-to-talk release, and
+bidirectional WebRTC audio through a synthetic recognizer, connector, and
+synthesizer. It also checks that disconnect releases the call.
+
 Physical acceptance requires a normal Windows desktop with the intended microphone
 and output device. With explicit approval and a disposable Kin, launch with that
 Kin configured and permit one recent history read. Use two planned utterances
@@ -302,3 +348,9 @@ For live Jevos GPU acceptance, use an approved disposable conversation. Enable
 Jevos with **GPU (Vulkan)** and save, complete enough messages to generate a sample,
 and check its model label in the heatmap. Turn Jevos off and save during the call.
 Check that the worker disappears from **Models** and the call can continue.
+
+For live phone acceptance, use an approved disposable conversation. Place one
+call in each mode from the phone on Wi-Fi and mobile data. Check phone capture,
+streamed playback, stop, and disconnect behavior. Test speaking over a reply
+in WebRTC with the handset speaker and headphones. Check the laptop delivery
+guard if the network is intentionally cut during a send.

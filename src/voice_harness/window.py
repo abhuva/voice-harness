@@ -5,7 +5,7 @@ from sqlite3 import Error as StateError
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QProgressBar,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QProgressBar,
     QPushButton, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -100,6 +100,9 @@ class DictationControls(QWidget):
 
 
 class Window(QWidget):
+    phone_requested = pyqtSignal(object)
+    phone_disconnected = pyqtSignal(object)
+
     def __init__(self, settings, harness):
         super().__init__()
         self.setWindowTitle("Voice Harness")
@@ -119,7 +122,8 @@ class Window(QWidget):
         self.decision_questions = ()
 
         layout = QVBoxLayout(self)
-        tabs = QTabWidget()
+        tabs = self.tabs = QTabWidget()
+        self.phone_call = None
         layout.addWidget(tabs)
         chat_page = QWidget()
         tabs.addTab(chat_page, "Kindroid chat")
@@ -282,21 +286,79 @@ class Window(QWidget):
             self.previous.show()
         self.begin("Recent history", partial(load_history, self.settings), "Loading recent Kindroid history")
 
+    def enable_phone(self, origin, pairing):
+        page = QWidget()
+        form = QFormLayout(page)
+        pin = QLineEdit(pairing.pin)
+        pin.setMaxLength(8)
+        pin.setInputMethodHints(Qt.InputMethodHint.ImhDigitsOnly)
+        font = pin.font()
+        font.setPointSize(24)
+        pin.setFont(font)
+        form.addRow("Pairing &PIN", pin)
+        save_pin = QPushButton("Set pairing PIN")
+        form.addRow(save_pin)
+        notice = QLabel("Use 4 to 8 digits.")
+        notice.setAccessibleName("Pairing PIN status")
+        form.addRow(notice)
+        link = QLineEdit(f"{origin}/#code={pairing.pin}")
+        link.setReadOnly(True)
+        form.addRow("Phone pairing &link", link)
+
+        def apply():
+            try:
+                pairing.set_pin(pin.text().strip())
+            except VoiceError as exc:
+                notice.setText(str(exc))
+                return
+            pin.setText(pairing.pin)
+            link.setText(f"{origin}/#code={pairing.pin}")
+            notice.setText("Pairing PIN set.")
+
+        pin.textEdited.connect(lambda _: notice.setText("Click Set pairing PIN to apply."))
+        pin.returnPressed.connect(apply)
+        save_pin.clicked.connect(apply)
+        self.tabs.addTab(page, "Phone")
+        self.phone_requested.connect(self.start_phone_call, Qt.ConnectionType.QueuedConnection)
+        self.phone_disconnected.connect(self.stop_phone_call, Qt.ConnectionType.QueuedConnection)
+
     def start_call(self):
+        self.begin_call()
+
+    def start_phone_call(self, phone):
+        if not phone.closed.is_set():
+            self.begin_call(phone)
+
+    def stop_phone_call(self, phone):
+        if self.phone_call is phone:
+            self.stop_work()
+
+    def begin_call(self, phone=None):
+        def blocked(text):
+            if phone is not None:
+                phone.finish(text)
+
+        if self.closing:
+            blocked("Voice Harness is closing.")
+            return
         if self.worker is not None:
+            blocked("The laptop is busy. Wait for the current operation to end.")
             return
         try:
             if self.harness.state.pending_delivery():
+                blocked("Review the unresolved Kindroid delivery on the laptop.")
                 return
         except StateError:
             self.update_controls()
+            blocked("Could not read the local delivery state.")
             return
         call_input, playback = self.saved_call_input, self.playback.apply_to(self.voice)
-        self.call = CallOperation(self.settings, call_input, playback)
+        self.call = CallOperation(self.settings, call_input, playback, phone=phone)
         keys = [recognition_key(self.settings.dictate, call_input, vulkan_directory=self.settings.fluid_vulkan)]
         if playback.speed:
             keys.append(self.settings.synthesis.key(playback))
-        self.begin("Call", self.call, "Preparing call", models=keys,
+        stage = "Preparing phone call" if phone is not None else "Preparing call"
+        self.begin("Call", self.call, stage, models=keys, phone=phone,
                    profile=call_profile(call_input, playback, self.settings.synthesis),
                    recognition_on_demand=call_input.stt_on_demand)
 
@@ -347,7 +409,7 @@ class Window(QWidget):
         self.cloning.refresh_recipes(recipes, ident)
         self.tts.select_clone(ident, recipes)
 
-    def begin(self, label, operation, stage, *, models=(), profile=None, recognition_on_demand=False):
+    def begin(self, label, operation, stage, *, models=(), profile=None, recognition_on_demand=False, phone=None):
         try:
             job = self.harness.submit(label, profile=profile, models=models,
                                       strict_memory=self.saved_strict_memory,
@@ -355,10 +417,14 @@ class Window(QWidget):
         except VoiceError as exc:
             self.call = None
             self.status.setText(str(exc))
+            if phone is not None:
+                phone.finish(str(exc))
             return
         except (OSError, StateError):
             self.call = None
             self.status.setText("Could not start the operation. Check the local state folder.")
+            if phone is not None:
+                phone.finish(self.status.text())
             return
         if label != "Recent history":
             self.previous.hide()
@@ -375,6 +441,13 @@ class Window(QWidget):
         self.worker.resources.connect(self.status.setToolTip)
         self.worker.result.connect(self.status.setText)
         self.worker.finished.connect(self.finish_work)
+        self.phone_call = phone
+        if phone is not None:
+            phone.bind_call(job.stop)
+            self.worker.stage.connect(phone.say)
+            self.worker.message.connect(phone.message)
+            self.worker.result.connect(phone.finish)
+            phone.say(stage)
         self.status.setToolTip("")
         self.show_stage(stage)
         self.progress.show()
@@ -464,6 +537,7 @@ class Window(QWidget):
     def finish_work(self):
         self.worker.deleteLater()
         self.worker = self.call = None
+        self.phone_call = None
         self.progress.hide()
         self.microphone.reset()
         self.speaker.reset()

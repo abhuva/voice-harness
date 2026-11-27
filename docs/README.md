@@ -19,6 +19,7 @@ with Pocket TTS. You can speak over a reply to start your next turn.
 - [Choose a TTS model or clone a voice](operations.md#tts-and-voice-cloning) using local recordings.
 - [Adjust voice interruption](operations.md#during-a-call) or recover an uncertain delivery.
 - [Inspect runtime activity or configure Jevos](operations.md#monitoring-and-jevos).
+- [Use a phone over Tailscale](operations.md#phone-calls).
 
 ## How it works
 

@@ -7,10 +7,11 @@ from .tempo import playback_blocks
 
 
 class AudioPlayback:
-    def __init__(self, settings, meter, *, reference=None):
+    def __init__(self, settings, meter, *, reference=None, device_factory=None):
         self.settings = settings
         self.meter = meter
         self.reference = reference
+        self.device_factory = device_factory
 
     def play(self, next_pcm, stop, stage, *, played=None, first_audio=None):
         import sounddevice as sd
@@ -28,7 +29,9 @@ class AudioPlayback:
                 if device is None:
                     rate = clip.rate
                     output = OutputAudio(rate)
-                    if self.reference is None and first_audio is None:
+                    if self.device_factory is not None:
+                        device = self.device_factory(rate, stop)
+                    elif self.reference is None and first_audio is None:
                         device = sd.RawOutputStream(samplerate=rate, channels=1,
                                                     dtype="float32", latency="low")
                     else:

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Harness</title>
+  <link rel="stylesheet" href="/phone.css">
+  <script src="/phone.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Voice Harness</h1>
+      <p id="status" role="status" aria-live="polite">Ready to connect</p>
+    </header>
+    <form id="connect">
+      <label for="code">Pairing PIN from the laptop</label>
+      <input id="code" type="text" inputmode="numeric" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      <label for="mode">Call mode</label>
+      <select id="mode">
+        <option value="ptt">Push to talk</option>
+        <option value="rtc">Hands-free · WebRTC</option>
+      </select>
+      <button id="start" type="submit">Start call</button>
+    </form>
+    <section id="call" hidden aria-label="Call controls">
+      <button id="talk" type="button" disabled>Hold to talk</button>
+      <button id="enable-audio" type="button" hidden>Play reply audio</button>
+      <audio id="reply" aria-label="Reply audio" controls autoplay playsinline hidden></audio>
+      <button id="stop" type="button">End call</button>
+    </section>
+    <ol id="chat" aria-label="Conversation"></ol>
+  </main>
+</body>
+</html>

@@ -1,0 +1,28 @@
+:root {
+  color-scheme: dark;
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #e8eef0;
+  background: #10191c;
+}
+body { margin: 0; }
+main { max-width: 32rem; margin: auto; padding: 1.25rem; }
+header { border-bottom: 1px solid #33474d; margin-bottom: 1.25rem; }
+h1 { font-size: 1.65rem; margin: 0; }
+#status { min-height: 1.5em; color: #a7c1c9; }
+form, section { display: grid; gap: .65rem; }
+form [type=submit] { margin-top: .5rem; }
+[hidden] { display: none !important; }
+input, select, button, audio { box-sizing: border-box; width: 100%; min-height: 2.8rem; }
+input, select, button { border: 1px solid #527179; border-radius: .5rem; padding: .55rem .8rem; font: inherit; }
+input, select { background: #19292e; }
+#code { font-size: 1.6rem; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+button { background: #a8e2d5; color: #122822; font-weight: 650; }
+button:disabled { opacity: .55; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #edca7d; outline-offset: 2px; }
+#talk { min-height: 5rem; touch-action: none; user-select: none; }
+#talk[aria-pressed=true] { background: #edca7d; }
+#stop { background: #19292e; color: #e8eef0; }
+ol { display: grid; gap: .75rem; list-style: none; padding: 0; }
+li { border-radius: .55rem; background: #19292e; padding: .65rem .85rem; overflow-wrap: anywhere; }
+li p { white-space: pre-wrap; margin: .25rem 0; }
+li small { color: #a7c1c9; }

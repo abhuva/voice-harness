@@ -25,4 +25,4 @@ voice-harness = "voice_harness.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-voice_harness = ["fluid-speech-pro.json"]
+voice_harness = ["fluid-speech-pro.json", "phone_web/*.html", "phone_web/*.css", "phone_web/*.js"]

@@ -56,6 +56,10 @@ can turn the workflow off while keeping the selected device. When enabled,
 the chat heatmap shows up to 100 scored samples from three-message windows. See
 [monitoring and Jevos](docs/operations.md#monitoring-and-jevos) for setup and timing definitions.
 
+Open the optional **Phone** tab to pair a browser on your Tailscale network.
+The phone can use **Push to talk** or **Hands-free · WebRTC** while the laptop
+does the processing. See [Phone calls](docs/operations.md#phone-calls).
+
 ## Develop
 
 Read [AGENTS.md](AGENTS.md) and the [documentation map](docs/README.md). From PowerShell,
