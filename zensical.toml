@@ -31,6 +31,7 @@ nav = [
         { "010 · Scoped speech settings" = "adr/010-scoped-speech-settings.md" },
         { "011 · Jevos on Vulkan" = "adr/011-jevos-vulkan.md" },
         { "012 · Phone audio" = "adr/012-phone-audio.md" },
+        { "013 · Tailnet routing" = "adr/013-tailnet-routing.md" },
     ] },
 ]
 

@@ -2,10 +2,11 @@
 
 import asyncio
 from concurrent.futures import Future
+from ipaddress import ip_address
 import json
 from pathlib import Path
 from queue import Empty
-from threading import Thread
+from threading import Lock, Thread
 
 from aiohttp import WSMsgType, web
 
@@ -13,11 +14,14 @@ from .contracts import VoiceError
 from .phone_audio import PhoneAudio
 from .phone_pairing import PhonePairing
 from .phone_rtc import PhonePeer
+from .receiver import PlaybackReceiver, receiver_id
 
 
 ASSETS = Path(__file__).with_name("phone_web")
 FILES = {"/": ("index.html", "text/html"), "/phone.css": ("phone.css", "text/css"),
-         "/phone.js": ("phone.js", "text/javascript"), "/capture.js": ("capture.js", "text/javascript")}
+         "/phone.js": ("phone.js", "text/javascript"), "/capture.js": ("capture.js", "text/javascript"),
+         "/listen": ("listen.html", "text/html"), "/listen.js": ("listen.js", "text/javascript"),
+         "/pcm.js": ("pcm.js", "text/javascript")}
 MAX_SOCKETS = 8
 
 
@@ -32,6 +36,14 @@ def action(message):
     return {}
 
 
+def client_address(request):
+    forwarded = request.headers.get("X-Forwarded-For", "").rsplit(",", 1)[-1].strip()
+    try:
+        return str(ip_address(forwarded or request.remote or ""))
+    except ValueError:
+        return None
+
+
 class PhoneGateway:
     def __init__(self, origin, ice_address, start_call, stop_call):
         self.origin = origin
@@ -40,6 +52,16 @@ class PhoneGateway:
         self.pairing = PhonePairing()
         self.active = None
         self.sockets = set()
+        self._receivers = {}
+        self._receivers_lock = Lock()
+
+    def receivers(self):
+        with self._receivers_lock:
+            return tuple(self._receivers.values())
+
+    def receiver(self, ident):
+        with self._receivers_lock:
+            return self._receivers.get(ident)
 
     def app(self):
         app = web.Application(client_max_size=64 * 1024)
@@ -76,6 +98,10 @@ class PhoneGateway:
         try:
             await socket.prepare(request)
             connect = action(await socket.receive(timeout=8))
+            if connect.get("type") == "receiver":
+                self.pairing.verify(connect.get("code"))
+                await self.listen(socket, connect, client_address(request))
+                return socket
             if connect.get("type") != "call":
                 return socket
             self.pairing.verify(connect.get("code"))
@@ -84,7 +110,7 @@ class PhoneGateway:
                 raise VoiceError("Choose push-to-talk or WebRTC.")
             if self.active is not None:
                 raise VoiceError("Another phone call is already active.")
-            self.active = audio = PhoneAudio(mode)
+            self.active = audio = PhoneAudio(mode, client_address(request))
             if mode == "rtc":
                 offer = connect.get("offer")
                 if not isinstance(offer, str):
@@ -95,7 +121,7 @@ class PhoneGateway:
                 await asyncio.wait_for(peer.connected.wait(), timeout=12)
                 if audio.closed.is_set() or socket.closed:
                     raise VoiceError("The WebRTC audio connection closed.")
-            updates = asyncio.create_task(self.send_updates(socket, audio))
+            updates = asyncio.create_task(self.send_updates(socket, audio, stream_pcm=mode == "ptt"))
             self.start_call(audio)
             started = True
             async for message in socket:
@@ -138,7 +164,32 @@ class PhoneGateway:
                 await socket.close()
         return socket
 
-    async def send_updates(self, socket, audio):
+    async def listen(self, socket, connect, address):
+        ident = receiver_id(connect.get("id"))
+        name = connect.get("name")
+        if not ident or not isinstance(name, str) or not 1 <= len(name.strip()) <= 48 or not name.isprintable():
+            raise VoiceError("Enter a device name of 1 to 48 characters.")
+        receiver = PlaybackReceiver(ident, name.strip(), address)
+        with self._receivers_lock:
+            if ident in self._receivers:
+                raise VoiceError("This playback receiver is already connected.")
+            self._receivers[ident] = receiver
+        updates = None
+        try:
+            await socket.send_json({"type": "ready"})
+            updates = asyncio.create_task(self.send_updates(socket, receiver, stream_pcm=True))
+            async for message in socket:
+                if action(message).get("type") == "hangup":
+                    break
+        finally:
+            receiver.disconnect()
+            with self._receivers_lock:
+                del self._receivers[ident]
+            if updates is not None:
+                updates.cancel()
+                await asyncio.gather(updates, return_exceptions=True)
+
+    async def send_updates(self, socket, audio, *, stream_pcm):
         clock = asyncio.get_running_loop().time
         next_audio = clock()
         try:
@@ -152,7 +203,7 @@ class PhoneGateway:
                 if audio.closed.is_set():
                     await socket.close()
                     return
-                if audio.mode == "ptt" and clock() >= next_audio:
+                if stream_pcm and clock() >= next_audio:
                     try:
                         frame = audio.output.get_nowait()
                     except Empty:

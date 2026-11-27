@@ -10,6 +10,7 @@ from .contracts import CallInput, VoiceError
 from .fluid_vulkan import FLUID_VULKAN_DIRECTORY
 from .presets import OutputSettings, SynthesisSettings, VoiceLibrary
 from .recognizer import STT_MODELS
+from .receiver import receiver_id
 from .synthesis import SynthesisFactory
 
 
@@ -70,7 +71,10 @@ class Settings:
         return self._read_profile().get("phone_output", "phone")
 
     def save_phone_output(self, destination):
-        if destination not in ("phone", "desktop"):
+        if destination not in ("phone", "desktop") and not (
+            isinstance(destination, str) and destination.startswith("receiver:")
+            and receiver_id(destination.removeprefix("receiver:"))
+        ):
             raise VoiceError("Choose a phone playback destination.")
         self._save(phone_output=destination)
 

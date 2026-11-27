@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
+from types import SimpleNamespace
 import time
 import unittest
 from unittest.mock import patch
@@ -16,6 +17,7 @@ from voice_harness.harness import Harness, Outcome
 from voice_harness.phone_audio import PhoneAudio
 from voice_harness.phone_pairing import PhonePairing
 from voice_harness.presets import Recipe
+from voice_harness.receiver import PlaybackReceiver
 from voice_harness.settings import Settings
 from voice_harness.state import State
 from voice_harness.window import Window
@@ -175,6 +177,32 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(factory.call_args.kwargs["desktop_phone_output"])
             self.assertFalse(factory.call_args.args[1].interrupt)
             self.wait_for(lambda: self.window.worker is None)
+
+    def test_phone_call_uses_selected_receiver_and_reports_disconnect(self):
+        ident = "65860c36-3982-4c35-b7f9-02e0b0051938"
+        receiver = PlaybackReceiver(ident, "Laptop", "100.64.1.9")
+        self.settings.save_phone_output(f"receiver:{ident}")
+        gateway = SimpleNamespace(receivers=lambda: () if receiver.closed.is_set() else (receiver,),
+                                  receiver=lambda key: receiver if key == ident else None)
+        self.window.enable_phone("http://127.0.0.1:8768", PhonePairing(), gateway)
+        phone = PhoneAudio("rtc")
+
+        def operation(_worker, stop):
+            stop.wait(2)
+            return "Done"
+
+        with patch("voice_harness.window.CallOperation", return_value=operation) as factory:
+            self.window.start_phone_call(phone)
+            self.assertIs(factory.call_args.kwargs["receiver"], receiver)
+            self.assertFalse(factory.call_args.args[1].interrupt)
+            receiver.disconnect()
+            self.wait_for(lambda: self.window.worker is None)
+        self.assertIn("Laptop playback disconnected", phone.events[-1]["text"])
+
+        next_call = PhoneAudio("ptt")
+        self.window.start_phone_call(next_call)
+        self.assertTrue(next_call.finished.is_set())
+        self.assertIn("Choose another output", next_call.events[-1]["text"])
 
     def test_sst_residency_toggle_saves_and_applies_to_next_call(self):
         tabs = self.window.findChild(QTabWidget)

@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from types import SimpleNamespace
+from uuid import uuid4
 import asyncio
 import unittest
 
@@ -57,6 +58,7 @@ class PhoneTests(unittest.IsolatedAsyncioTestCase):
         self.calls = []
         self.sent = []
         self.errors = []
+        self.receiver = None
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.state = State(Path(self.temp.name))
@@ -70,10 +72,12 @@ class PhoneTests(unittest.IsolatedAsyncioTestCase):
     def run_fixture(self, phone):
         stop = Event()
         phone.bind_call(stop)
+        if self.receiver is not None:
+            self.receiver.bind_call(stop)
         meter = lambda *_: None
         preferences = SimpleNamespace(speed=1.0, bass=0, mid=0, treble=0)
         synth = SimpleNamespace(render=lambda *_: PCM(OUTPUT_RATE, tone(OUTPUT_RATE, 10).tobytes()))
-        speaker = SynthesizedSpeech(synth, phone.playback(preferences, meter))
+        speaker = SynthesizedSpeech(synth, (self.receiver or phone).playback(preferences, meter))
         provider = SimpleNamespace(send=self.send)
         mic = phone.microphone(meter)
         recognizer = SimpleNamespace(transcribe=lambda _: "Fixture words")
@@ -179,6 +183,39 @@ class PhoneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ended["text"], "Fixture ended.")
         self.assertIn((await socket.receive(timeout=3)).type, (WSMsgType.CLOSE, WSMsgType.CLOSED))
         await self.join_call(phone, thread)
+
+    async def test_paired_receiver_gets_reply_pcm_and_stops_call_on_disconnect(self):
+        ident = str(uuid4())
+        url = self.server.make_url("/session")
+        request = {"type": "receiver", "id": ident, "name": "Laptop"}
+        async with self.client.ws_connect(url, origin=ORIGIN) as denied:
+            await denied.send_json({**request, "code": "invalid"})
+            self.assertEqual((await denied.receive_json(timeout=3))["type"], "ended")
+        self.assertEqual(self.gateway.receivers(), ())
+
+        async with self.client.ws_connect(url, origin=ORIGIN,
+                                          headers={"X-Forwarded-For": "192.0.2.8, 100.64.1.9"}) as receiver:
+            await receiver.send_json({**request, "code": self.gateway.pairing.pin})
+            await self.until(receiver, "ready")
+            self.receiver = self.gateway.receiver(ident)
+            self.assertEqual(self.receiver.address, "100.64.1.9")
+            phone = await self.connect("ptt")
+            await self.until(phone, "ready")
+            await phone.send_json({"type": "press"})
+            frame = (tone(16_000, 1) * 32767).astype("<i2").tobytes()
+            for _ in range(20):
+                await phone.send_bytes(frame)
+            await phone.send_json({"type": "release"})
+            pcm = await receiver.receive(timeout=7)
+            self.assertEqual(pcm.type, WSMsgType.BINARY)
+            self.assertEqual(len(pcm.data), 960)
+            self.assertTrue(any(pcm.data))
+            self.assertEqual(self.sent, ["Fixture words"])
+            self.assertTrue(self.calls[0][0].output.empty())
+            await receiver.close()
+        await self.until(phone, "ended")
+        self.assertTrue(self.receiver.closed.is_set())
+        self.assertEqual(self.gateway.receivers(), ())
 
     async def test_webrtc_sends_microphone_and_receives_synthesized_audio(self):
         client = RTCPeerConnection(RTCConfiguration(iceServers=[]))

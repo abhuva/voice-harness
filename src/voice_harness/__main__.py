@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from .contracts import VoiceError
 from .harness import Harness
+from .nodes import NodesPanel
+from .recognizer import STT_MODELS
 from .settings import Settings
 from .state import State
 from .window import Window
@@ -45,6 +47,7 @@ def main():
     app = QApplication([sys.argv[0]])
 
     phone = None
+    nodes = None
     try:
         settings.local.mkdir(parents=True, exist_ok=True)
         settings.history_guard.parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +68,17 @@ def main():
             phone = PhoneServer(args.phone_port, origin, address, window.phone_requested.emit,
                                 window.phone_disconnected.emit)
             phone.start()
-            window.enable_phone(origin, phone.gateway.pairing)
+            window.enable_phone(origin, phone.gateway.pairing, phone.gateway)
+        phone_tab = window.tabs.currentIndex()
+        if phone is not None:
+            phone_tab = window.tabs.count() - 1
+        nodes = NodesPanel(
+            phone.gateway if phone else None,
+            lambda: (f"Call processing, local playback · {STT_MODELS[window.saved_call_input.model]}"
+                     f" · Pocket TTS {window.voice.model.upper()}"),
+            lambda: window.tabs.setCurrentIndex(phone_tab),
+        )
+        window.tabs.addTab(nodes, "Nodes")
     except (OSError, StateError, VoiceError) as exc:
         error = str(exc) if isinstance(exc, VoiceError) else "Could not open the local voice state or bundle."
         QMessageBox.critical(None, "Voice Harness", error)
@@ -76,6 +89,8 @@ def main():
         window.start_history()
         return app.exec()
     finally:
+        if nodes is not None:
+            nodes.close_polling()
         if phone is not None:
             phone.close()
         harness.models.evict_idle()

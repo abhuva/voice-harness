@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Harness playback</title>
+  <link rel="stylesheet" href="/phone.css">
+  <script src="/pcm.js" defer></script>
+  <script src="/listen.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Voice Harness playback</h1>
+      <p id="status" role="status">Pair this device to play replies on its speakers.</p>
+    </header>
+    <form id="connect">
+      <label for="name">Device name</label>
+      <input id="name" maxlength="48" required>
+      <label for="code">Pairing PIN from the host's Phone tab</label>
+      <input id="code" type="text" inputmode="numeric" autocomplete="off" required>
+      <button id="start" type="submit">Connect playback</button>
+    </form>
+    <button id="stop" type="button" hidden>Disconnect playback</button>
+  </main>
+</body>
+</html>

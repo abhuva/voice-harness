@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from functools import partial
+from socket import gethostname
 from sqlite3 import Error as StateError
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -126,6 +127,7 @@ class Window(QWidget):
         tabs = self.tabs = QTabWidget()
         self.phone_call = None
         self.phone_output = "phone"
+        self.phone_gateway = None
         layout.addWidget(tabs)
         chat_page = QWidget()
         tabs.addTab(chat_page, "Kindroid chat")
@@ -288,7 +290,8 @@ class Window(QWidget):
             self.previous.show()
         self.begin("Recent history", partial(load_history, self.settings), "Loading recent Kindroid history")
 
-    def enable_phone(self, origin, pairing):
+    def enable_phone(self, origin, pairing, gateway=None):
+        self.phone_gateway = gateway
         page = QWidget()
         form = QFormLayout(page)
         pin = QLineEdit(pairing.pin)
@@ -306,17 +309,18 @@ class Window(QWidget):
         link = QLineEdit(f"{origin}/#code={pairing.pin}")
         link.setReadOnly(True)
         form.addRow("Phone pairing &link", link)
+        form.addRow("Microphone", QLabel("Phone browser"))
+        form.addRow("Processing", QLabel(f"{gethostname()} (this PC)"))
+        if gateway is not None:
+            receiver_link = QLineEdit(f"{origin}/listen")
+            receiver_link.setReadOnly(True)
+            form.addRow("Playback receiver &link", receiver_link)
 
         output = QComboBox()
-        output.addItem("Smartphone", "phone")
-        output.addItem("Work PC default audio output", "desktop")
         output_status = QLabel("Applies to the next phone call.")
         output_status.setAccessibleName("Phone playback status")
         try:
-            saved = output.findData(self.settings.load_phone_output())
-            if saved >= 0:
-                output.setCurrentIndex(saved)
-                self.phone_output = output.currentData()
+            self.phone_output = self.settings.load_phone_output()
         except VoiceError as exc:
             output_status.setText(str(exc))
         form.addRow("Play phone call &replies on", output)
@@ -335,7 +339,31 @@ class Window(QWidget):
             self.phone_output = destination
             output_status.setText("Saved for the next phone call.")
 
+        def refresh_outputs():
+            items = [("Smartphone", "phone"), ("Work PC default audio output", "desktop")]
+            if gateway is not None:
+                for receiver in sorted(gateway.receivers(), key=lambda node: (node.name.casefold(), node.ident)):
+                    name = receiver.name
+                    if receiver.address:
+                        name += f" ({receiver.address})"
+                    items.append((name, f"receiver:{receiver.ident}"))
+            if not any(value == self.phone_output for _, value in items):
+                items.append(("Saved playback receiver disconnected", self.phone_output))
+            if items == [(output.itemText(i), output.itemData(i)) for i in range(output.count())]:
+                return
+            previous = output.blockSignals(True)
+            output.clear()
+            for label, value in items:
+                output.addItem(label, value)
+            output.setCurrentIndex(output.findData(self.phone_output))
+            output.blockSignals(previous)
+
+        refresh_outputs()
         output.currentIndexChanged.connect(save_output)
+        if gateway is not None:
+            refresh = QTimer(page, interval=1000)
+            refresh.timeout.connect(refresh_outputs)
+            refresh.start()
 
         def apply():
             try:
@@ -386,15 +414,24 @@ class Window(QWidget):
             return
         call_input, playback = self.saved_call_input, self.playback.apply_to(self.voice)
         desktop_phone_output = phone is not None and self.phone_output == "desktop"
-        if desktop_phone_output and phone.mode == "rtc" and playback.speed:
+        receiver = None
+        if phone is not None and isinstance(self.phone_output, str) and self.phone_output.startswith("receiver:"):
+            if self.phone_gateway is not None:
+                receiver = self.phone_gateway.receiver(self.phone_output.removeprefix("receiver:"))
+            if receiver is None or receiver.closed.is_set():
+                message = "Playback receiver disconnected. Choose another output in the host’s Phone tab."
+                self.status.setText(message)
+                blocked(message)
+                return
+        if (desktop_phone_output or receiver is not None) and phone.mode == "rtc" and playback.speed:
             call_input = replace(call_input, interrupt=False)
         self.call = CallOperation(self.settings, call_input, playback, phone=phone,
-                                  desktop_phone_output=desktop_phone_output)
+                                  desktop_phone_output=desktop_phone_output, receiver=receiver)
         keys = [recognition_key(self.settings.dictate, call_input, vulkan_directory=self.settings.fluid_vulkan)]
         if playback.speed:
             keys.append(self.settings.synthesis.key(playback))
         stage = "Preparing phone call" if phone is not None else "Preparing call"
-        self.begin("Call", self.call, stage, models=keys, phone=phone,
+        self.begin("Call", self.call, stage, models=keys, phone=phone, receiver=receiver,
                    profile=call_profile(call_input, playback, self.settings.synthesis),
                    recognition_on_demand=call_input.stt_on_demand)
 
@@ -445,7 +482,8 @@ class Window(QWidget):
         self.cloning.refresh_recipes(recipes, ident)
         self.tts.select_clone(ident, recipes)
 
-    def begin(self, label, operation, stage, *, models=(), profile=None, recognition_on_demand=False, phone=None):
+    def begin(self, label, operation, stage, *, models=(), profile=None, recognition_on_demand=False,
+              phone=None, receiver=None):
         try:
             job = self.harness.submit(label, profile=profile, models=models,
                                       strict_memory=self.saved_strict_memory,
@@ -475,14 +513,24 @@ class Window(QWidget):
         self.worker.mic_level.connect(self.microphone.set_levels)
         self.worker.speaker_level.connect(self.speaker.set_levels)
         self.worker.resources.connect(self.status.setToolTip)
-        self.worker.result.connect(self.status.setText)
+        def show_result(text):
+            if receiver is not None:
+                receiver.release_call()
+                if text == "Call stopped." and receiver.closed.is_set():
+                    text = f"{receiver.name} playback disconnected. Choose an output before calling again."
+            self.status.setText(text)
+            if phone is not None:
+                phone.finish(text)
+
+        self.worker.result.connect(show_result)
         self.worker.finished.connect(self.finish_work)
         self.phone_call = phone
+        if receiver is not None:
+            receiver.bind_call(job.stop)
         if phone is not None:
             phone.bind_call(job.stop)
             self.worker.stage.connect(phone.say)
             self.worker.message.connect(phone.message)
-            self.worker.result.connect(phone.finish)
             phone.say(stage)
         self.status.setToolTip("")
         self.show_stage(stage)

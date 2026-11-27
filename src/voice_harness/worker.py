@@ -59,12 +59,13 @@ def call_profile(call_input, playback, synthesis):
 
 
 class CallOperation:
-    def __init__(self, settings, call_input, playback, *, phone=None, desktop_phone_output=False):
+    def __init__(self, settings, call_input, playback, *, phone=None, desktop_phone_output=False, receiver=None):
         self.settings = settings
         self.call_input = call_input
         self.playback = playback
         self.phone = phone
         self.desktop_phone_output = desktop_phone_output
+        self.receiver = receiver
         self.speaker = None
 
     def tune(self, playback):
@@ -147,8 +148,9 @@ class CallOperation:
                     if model is None:
                         return "Call stopped."
                     harness.watch_process(job, model.process_id, warm=True)
-                    sink = (self.phone.playback(self.playback, worker.speaker_level.emit)
-                            if self.phone is not None and not self.desktop_phone_output
+                    endpoint = self.receiver or (None if self.desktop_phone_output else self.phone)
+                    sink = (endpoint.playback(self.playback, worker.speaker_level.emit)
+                            if endpoint is not None
                             else AudioPlayback(self.playback, worker.speaker_level.emit, reference=reference))
                     self.speaker = SynthesizedSpeech(model, sink)
                 run_call(microphone, recognize, self.speaker, provider, harness.state,

@@ -216,6 +216,33 @@ To use speakers, headphones, or a Bluetooth device on the PC, select it as the
 default output in Windows. In hands-free mode with PC playback, wait until the
 reply finishes before speaking so the phone microphone does not pick up the reply.
 
+### Route replies to another device
+
+Open **Nodes** on the host for the Tailscale devices it can see and the Voice
+Harness capabilities currently connected. A device can be online before it has
+a connected microphone or playback receiver. Phone capabilities appear when a
+phone call connects. The network's displayed online state comes from Tailscale.
+
+1. On the laptop or another tailnet device, open the **Playback receiver link**
+   from the host's **Phone** tab. It ends in `/listen`.
+2. Enter a device name, such as **Laptop**, and the PIN from the host's **Phone**
+   tab. Click **Connect playback** and keep that browser page open.
+3. On the host, select that device under **Play phone call replies on**. Start
+   the call from the phone. The phone records, the host processes the call,
+   and the receiver plays the reply through its own default audio output.
+
+If the receiver disconnects, the call stops. Reconnect the receiver or select
+another output before starting a new call. In hands-free mode with remote playback,
+wait for the reply to finish before speaking.
+
+The offline fixture pairs a receiver, sends a synthetic phone utterance, checks
+that reply PCM arrives only at the receiver, and verifies cancellation on
+disconnect. Physical acceptance uses a phone and laptop on the tailnet, with
+the **Nodes** tab showing their connection state and the laptop playing a reply
+during an approved disposable conversation.
+
+### Connect the phone to the tailnet
+
 1. Put the laptop and phone on your Tailscale network. Keep the laptop awake
    with Voice Harness running while using the phone.
 2. Install the optional runtime once from the repository with

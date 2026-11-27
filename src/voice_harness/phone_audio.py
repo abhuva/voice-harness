@@ -31,8 +31,9 @@ def empty(queue):
 
 
 class PhoneAudio:
-    def __init__(self, mode):
+    def __init__(self, mode, address=None):
         self.mode = mode
+        self.address = address
         self.input = Queue(maxsize=300)
         self.output = Queue(maxsize=12)
         self.events = deque(maxlen=128)
