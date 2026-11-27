@@ -208,8 +208,13 @@ continue through the existing Kindroid path.
 The phone supplies the microphone and plays the reply. The laptop runs the
 call, uses the saved SST and TTS choices, and contacts Kindroid. The phone page
 shows the current call and its messages. The laptop and phone share one call
-slot, and either can end the phone call. Unmute **Playback** on the laptop
-to hear replies on the phone.
+slot, and either can end the phone call. Unmute **Playback** on the host PC
+to hear replies. In its **Phone** tab, choose **Smartphone** or **Work PC default
+audio output** under **Play phone call replies on**. The choice is saved and
+applies when the next phone call starts. The phone still supplies the microphone.
+To use speakers, headphones, or a Bluetooth device on the PC, select it as the
+default output in Windows. In hands-free mode with PC playback, wait until the
+reply finishes before speaking so the phone microphone does not pick up the reply.
 
 1. Put the laptop and phone on your Tailscale network. Keep the laptop awake
    with Voice Harness running while using the phone.
@@ -229,6 +234,11 @@ to hear replies on the phone.
    **Hands-free · WebRTC**, speak and pause as you would at the laptop.
    Use **End call** when finished.
 
+To enable phone mode when opening **Start Voice Harness.bat**, save an ignored
+`var/phone-launch.json` with an `origin` field containing the private HTTPS
+address and an optional `iceAddress` field containing the host's Tailscale IPv4
+address. Use `-Phone:$false` with `scripts/start.ps1` for a desktop-only launch.
+
 Push-to-talk streams the reply over the same secure connection that carries
 the phone controls. WebRTC uses the HTTPS connection for setup and a separate
 UDP audio connection over Tailscale. The launcher discovers the laptop's
@@ -237,7 +247,10 @@ Tailscale IPv4 address when it can run `tailscale ip -4`. Supply
 requires the phone to reach the laptop on UDP through the tailnet and host
 firewall. Push-to-talk also works when the network only allows HTTPS.
 
-Keep the browser page in the foreground during the first phone test. WebRTC
+Keep the browser page in the foreground during phone calls. The page requests
+a screen wake lock for the call to prevent automatic screen timeout and
+releases it when the call ends. If you lock the phone or leave the page, Android
+and the browser may suspend the microphone or connection. WebRTC
 uses the phone browser's echo cancellation. Tap **Play reply audio** if the
 browser asks you to start playback. The laptop preserves unresolved send
 claims when the connection drops and displays its usual delivery check.

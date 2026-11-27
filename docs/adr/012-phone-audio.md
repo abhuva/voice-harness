@@ -29,6 +29,11 @@ pause-based capture and interruption rules. Echo cancellation takes place in
 the phone browser. The HTTPS proxy carries control traffic and the phone
 initiates WebRTC connectivity checks to the laptop's offered address.
 
+The desktop Phone tab also lets the operator save the Windows default audio
+output as the reply destination for new phone calls. Phone input and control
+remain connected. With audible Windows playback, hands-free capture waits
+through replies because the playback bypasses the phone's echo canceller.
+
 ## Alternatives considered
 
 Desktop remoting could expose a whole session and would depend on each mobile

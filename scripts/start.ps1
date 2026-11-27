@@ -9,6 +9,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+$phoneConfig = Join-Path $root 'var/phone-launch.json'
+if (!$PSBoundParameters.ContainsKey('Phone') -and (Test-Path -LiteralPath $phoneConfig -PathType Leaf)) {
+    $localPhone = Get-Content -LiteralPath $phoneConfig -Raw | ConvertFrom-Json
+    $Phone = $true
+    if (!$PSBoundParameters.ContainsKey('PhoneOrigin')) { $PhoneOrigin = $localPhone.origin }
+    if (!$PSBoundParameters.ContainsKey('PhoneIceAddress')) { $PhoneIceAddress = $localPhone.iceAddress }
+}
 if (!$Assets) {
     $Assets = Join-Path $root 'var'
     if (!(Test-Path -LiteralPath (Join-Path $Assets 'voice/runtime/python.exe'))) {

@@ -66,6 +66,14 @@ class Settings:
     def save_output(self, output: OutputSettings):
         self._save(output=asdict(output.validate()))
 
+    def load_phone_output(self):
+        return self._read_profile().get("phone_output", "phone")
+
+    def save_phone_output(self, destination):
+        if destination not in ("phone", "desktop"):
+            raise VoiceError("Choose a phone playback destination.")
+        self._save(phone_output=destination)
+
     def _read_profile(self):
         try:
             profile = json.loads(self.preferences.read_text("utf-8"))

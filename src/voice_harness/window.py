@@ -1,5 +1,6 @@
 """Desktop controls and presentation. Work advances outside the UI thread."""
 
+from dataclasses import replace
 from functools import partial
 from sqlite3 import Error as StateError
 
@@ -124,6 +125,7 @@ class Window(QWidget):
         layout = QVBoxLayout(self)
         tabs = self.tabs = QTabWidget()
         self.phone_call = None
+        self.phone_output = "phone"
         layout.addWidget(tabs)
         chat_page = QWidget()
         tabs.addTab(chat_page, "Kindroid chat")
@@ -305,6 +307,36 @@ class Window(QWidget):
         link.setReadOnly(True)
         form.addRow("Phone pairing &link", link)
 
+        output = QComboBox()
+        output.addItem("Smartphone", "phone")
+        output.addItem("Work PC default audio output", "desktop")
+        output_status = QLabel("Applies to the next phone call.")
+        output_status.setAccessibleName("Phone playback status")
+        try:
+            saved = output.findData(self.settings.load_phone_output())
+            if saved >= 0:
+                output.setCurrentIndex(saved)
+                self.phone_output = output.currentData()
+        except VoiceError as exc:
+            output_status.setText(str(exc))
+        form.addRow("Play phone call &replies on", output)
+        form.addRow(output_status)
+
+        def save_output(_index):
+            destination = output.currentData()
+            try:
+                self.settings.save_phone_output(destination)
+            except (OSError, VoiceError):
+                previous = output.blockSignals(True)
+                output.setCurrentIndex(output.findData(self.phone_output))
+                output.blockSignals(previous)
+                output_status.setText("Could not save the phone playback destination.")
+                return
+            self.phone_output = destination
+            output_status.setText("Saved for the next phone call.")
+
+        output.currentIndexChanged.connect(save_output)
+
         def apply():
             try:
                 pairing.set_pin(pin.text().strip())
@@ -353,7 +385,11 @@ class Window(QWidget):
             blocked("Could not read the local delivery state.")
             return
         call_input, playback = self.saved_call_input, self.playback.apply_to(self.voice)
-        self.call = CallOperation(self.settings, call_input, playback, phone=phone)
+        desktop_phone_output = phone is not None and self.phone_output == "desktop"
+        if desktop_phone_output and phone.mode == "rtc" and playback.speed:
+            call_input = replace(call_input, interrupt=False)
+        self.call = CallOperation(self.settings, call_input, playback, phone=phone,
+                                  desktop_phone_output=desktop_phone_output)
         keys = [recognition_key(self.settings.dictate, call_input, vulkan_directory=self.settings.fluid_vulkan)]
         if playback.speed:
             keys.append(self.settings.synthesis.key(playback))

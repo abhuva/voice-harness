@@ -59,11 +59,12 @@ def call_profile(call_input, playback, synthesis):
 
 
 class CallOperation:
-    def __init__(self, settings, call_input, playback, *, phone=None):
+    def __init__(self, settings, call_input, playback, *, phone=None, desktop_phone_output=False):
         self.settings = settings
         self.call_input = call_input
         self.playback = playback
         self.phone = phone
+        self.desktop_phone_output = desktop_phone_output
         self.speaker = None
 
     def tune(self, playback):
@@ -73,6 +74,7 @@ class CallOperation:
 
     def __call__(self, worker, stop):
         provider = KindroidClient(*self.settings.credentials())
+        reference = None
         if self.phone is None:
             reference = PlaybackReference()
             enhancement = EchoProcessor(reference)
@@ -145,8 +147,9 @@ class CallOperation:
                     if model is None:
                         return "Call stopped."
                     harness.watch_process(job, model.process_id, warm=True)
-                    sink = (AudioPlayback(self.playback, worker.speaker_level.emit, reference=reference)
-                            if self.phone is None else self.phone.playback(self.playback, worker.speaker_level.emit))
+                    sink = (self.phone.playback(self.playback, worker.speaker_level.emit)
+                            if self.phone is not None and not self.desktop_phone_output
+                            else AudioPlayback(self.playback, worker.speaker_level.emit, reference=reference))
                     self.speaker = SynthesizedSpeech(model, sink)
                 run_call(microphone, recognize, self.speaker, provider, harness.state,
                          self.call_input, stop, stage, worker.message.emit, ready,

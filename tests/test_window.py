@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QLineEdit, QPushButton, QTabWidget
+from PyQt6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTabWidget
 
 from voice_harness.contracts import Message, VoiceError
 from voice_harness.decisions import CAPABILITY
@@ -159,6 +159,22 @@ class WindowTests(unittest.TestCase):
         apply.click()
         self.assertEqual(pairing.pin, "0420")
         self.assertEqual(link.text(), origin + "/#code=0420")
+
+    def test_phone_playback_destination_is_saved_and_applied_to_new_calls(self):
+        self.window.enable_phone("http://127.0.0.1:8768", PhonePairing())
+        page = self.window.tabs.widget(self.window.tabs.count() - 1)
+        output = page.findChild(QComboBox)
+        self.assertEqual(output.currentData(), "phone")
+        output.setCurrentIndex(output.findData("desktop"))
+        self.assertEqual(self.settings.load_phone_output(), "desktop")
+
+        phone = PhoneAudio("rtc")
+        with patch("voice_harness.window.CallOperation", return_value=lambda *_: "Done") as factory:
+            self.window.start_phone_call(phone)
+            self.assertIs(factory.call_args.kwargs["phone"], phone)
+            self.assertTrue(factory.call_args.kwargs["desktop_phone_output"])
+            self.assertFalse(factory.call_args.args[1].interrupt)
+            self.wait_for(lambda: self.window.worker is None)
 
     def test_sst_residency_toggle_saves_and_applies_to_next_call(self):
         tabs = self.window.findChild(QTabWidget)

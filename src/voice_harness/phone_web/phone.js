@@ -4,6 +4,7 @@ const form = byId("connect");
 const talk = byId("talk");
 const reply = byId("reply");
 const enableAudio = byId("enable-audio");
+const screenStatus = byId("screen-status");
 let current = null;
 
 const codeFromLink = new URLSearchParams(location.hash.slice(1)).get("code");
@@ -22,9 +23,40 @@ function clearPlayback(call) {
   call.playAt = 0;
 }
 
+async function keepScreenAwake(call) {
+  if (document.hidden || call.wakePending || (call.wakeLock && !call.wakeLock.released)) return;
+  const unavailable = "Keep this page open. The browser could not keep the screen awake.";
+  if (!navigator.wakeLock) {
+    screenStatus.textContent = unavailable;
+    return;
+  }
+  call.wakePending = true;
+  try {
+    const lock = await navigator.wakeLock.request("screen");
+    if (current !== call || document.hidden) {
+      await lock.release();
+      return;
+    }
+    call.wakeLock = lock;
+    screenStatus.textContent = "Screen stays awake during this call.";
+    lock.addEventListener("release", () => {
+      if (current === call && call.wakeLock === lock) {
+        call.wakeLock = null;
+        screenStatus.textContent = document.hidden ? "" : unavailable;
+      }
+    });
+  } catch {
+    if (current === call && !document.hidden) screenStatus.textContent = unavailable;
+  } finally {
+    call.wakePending = false;
+  }
+}
+
 function end(call, text) {
   if (current !== call) return;
   current = null;
+  call.wakeLock?.release().catch(() => {});
+  screenStatus.textContent = "";
   clearPlayback(call);
   call.socket?.close();
   call.peer?.close();
@@ -159,6 +191,7 @@ form.addEventListener("submit", async (event) => {
   const mode = byId("mode").value;
   const call = { mode, sources: new Set(), messages: new Map(), playAt: 0 };
   current = call;
+  void keepScreenAwake(call);
   byId("chat").replaceChildren();
   byId("start").disabled = true;
   byId("call").hidden = false;
@@ -241,6 +274,7 @@ enableAudio.addEventListener("click", () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) release("cancel");
+  else if (current) void keepScreenAwake(current);
 });
 byId("stop").addEventListener("click", () => {
   if (!current) return;
