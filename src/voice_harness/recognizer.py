@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .contracts import VoiceError
+from .residency import ModelKey
 
 STT_MODELS = {
     "multilingual": "Parakeet multilingual",
@@ -12,6 +13,12 @@ STT_MODELS = {
     "fluid-speech-pro": "Fluid Speech Pro",
 }
 FLUID_PROFILE = Path(__file__).with_name("fluid-speech-pro.json")
+
+
+def recognition_key(directory, settings, *, vulkan_directory=None):
+    if settings.stt_backend == "vulkan":
+        return ModelKey("stt", (vulkan_directory, settings.model, settings.threads, "vulkan"))
+    return ModelKey("stt", (directory, settings.model, settings.threads, "cpu"))
 
 
 class DictateRecognizer:
@@ -55,6 +62,10 @@ class DictateRecognizer:
         self.recognizer.wait_ready()
         if not self.recognizer.is_ready() and not stop.is_set():
             raise VoiceError("Could not load the local Dictate model.")
+
+    @property
+    def ready(self):
+        return self.recognizer is not None and self.recognizer.is_ready()
 
     def transcribe(self, samples):
         return self.recognizer.transcribe(samples)

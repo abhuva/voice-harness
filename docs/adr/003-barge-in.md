@@ -29,6 +29,9 @@ until the first valid reply data. If the original send remains uncertain,
 the workflow ends with the new draft visible and the original delivery claim
 intact. The Settings tab can disable speech interruption.
 
+[ADR-007](007-on-demand-recognition.md) refines the pre-roll, overlap threshold,
+and handling of short speech during an active reply.
+
 ## Alternatives considered
 
 Microphone volume alone works during silent waits but can mistake speaker echo

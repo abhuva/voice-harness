@@ -8,8 +8,9 @@ from .contracts import VoiceError
 
 
 class PocketEncoder:
-    def __init__(self, directory):
+    def __init__(self, directory, *, process_started=None):
         self.directory = directory
+        self.process_started = process_started
 
     def check(self):
         files = ("voice-clone.exe", "cloning.yaml", "cloning.safetensors", "tokenizer.model")
@@ -26,6 +27,8 @@ class PocketEncoder:
                 stderr=errors, creationflags=subprocess.CREATE_NO_WINDOW,
             ) as child:
                 try:
+                    if self.process_started is not None:
+                        self.process_started(child.pid)
                     deadline = time.monotonic() + 180
                     while not stop.is_set():
                         try:

@@ -2,18 +2,16 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from queue import Empty, Full, Queue
-import re
 from threading import Event
 import time
 
-from .contracts import VoiceError
+from .contracts import DeliveryConfirmed, ReplyCompleted, ReplyFailed, ReplyText, VoiceError
+from .segments import SentenceSegments
+from .telemetry import online
 
 
-_BREAK = re.compile(r"""[.!?…]+["'”’)]*(?=\s)|[\r\n]+""")
-_MAX_SEGMENT = 480
-
-
-def receive_reply(speaker, open_stream, stop, stage, update, *, interrupt=None):
+def receive_reply(speaker, open_stream, stop, stage, update, *, interrupt=None,
+                  delivery=lambda _status: None, complete_text=lambda _text: None, timing=None, telemetry=None):
     speech = Queue(maxsize=8)
     failed = Event()
     input_done = Event()
@@ -45,12 +43,15 @@ def receive_reply(speaker, open_stream, stop, stage, update, *, interrupt=None):
 
     def play():
         try:
-            speaker.speak(take_segment, token, reply_stage)
+            with online(telemetry, "Speech synthesis", "Audio playback"):
+                hooks = {"first_audio": lambda at: timing.mark("first_audio", at)} if timing else {}
+                speaker.speak(take_segment, token, reply_stage, **hooks)
         except Exception:
             failed.set()
             raise
 
-    reply = pending = ""
+    reply = ""
+    segments = SentenceSegments()
     last_update = 0.0
     playing = None
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="reply-playback") as player:
@@ -71,45 +72,56 @@ def receive_reply(speaker, open_stream, stop, stage, update, *, interrupt=None):
                 except Full:
                     continue
 
-        def queue_segments(text):
-            while text and not token.is_set():
-                match = _BREAK.search(text, 0, _MAX_SEGMENT + 1)
-                if match and match.end() <= _MAX_SEGMENT:
-                    end = match.end()
-                elif len(text) > _MAX_SEGMENT:
-                    end = text.rfind(" ", 1, _MAX_SEGMENT) + 1 or _MAX_SEGMENT
-                else:
-                    break
-                enqueue(text[:end].strip())
-                text = text[end:]
-            return text
-
         try:
             stream = open_stream(ProviderStop())
             try:
-                for delta in stream:
+                complete = False
+                for event in stream:
                     if stop.is_set() or failed.is_set():
                         break
+                    if isinstance(event, DeliveryConfirmed):
+                        if not confirmed.is_set():
+                            delivery("confirmed")
+                            confirmed.set()
+                        continue
+                    if isinstance(event, ReplyFailed):
+                        if not confirmed.is_set():
+                            delivery(event.delivery)
+                        raise VoiceError(event.message)
+                    if isinstance(event, ReplyCompleted):
+                        complete = True
+                        if reply.strip():
+                            complete_text(reply)
+                        break
+                    if not isinstance(event, ReplyText) or not confirmed.is_set():
+                        raise VoiceError("The reply connector violated its delivery protocol.")
+                    delta = event.text
                     if not delta:
                         continue
                     if not reply:
+                        if timing is not None:
+                            timing.mark("first_text")
                         reply_stage("Receiving Kindroid reply" + prompt)
                     reply += delta
                     if len(reply) > 512 * 1024:
                         raise VoiceError("Kindroid reply exceeded the display limit.")
                     now = time.monotonic()
-                    if not confirmed.is_set() or now - last_update >= 0.05:
+                    if now - last_update >= 0.05:
                         update(reply, "Interrupted" if interrupt.is_set() else "Receiving")
-                        confirmed.set()
                         last_update = now
                     if interrupt.is_set():
                         break
                     if speaker is not None:
-                        pending = queue_segments(pending + delta)
+                        for segment in segments.feed(delta):
+                            if token.is_set():
+                                break
+                            enqueue(segment)
+                if not complete and not ProviderStop().is_set():
+                    raise VoiceError("The connector ended without a terminal reply outcome.")
             finally:
                 stream.close()
             if speaker is not None:
-                enqueue(pending.strip())
+                enqueue(segments.finish())
             input_done.set()
             if playing is not None:
                 reply_stage("Finishing reply playback" + prompt)

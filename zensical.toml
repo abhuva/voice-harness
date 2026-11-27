@@ -12,6 +12,7 @@ nav = [
     { "Setup and operation" = "operations.md" },
     { "Harness" = [
         "harness/README.md",
+        { "Architecture diagrams" = "harness/diagrams.md" },
         { "Stack proposal" = "harness/stack.md" },
         { "Implementation review" = "harness/review.md" },
     ] },
@@ -21,7 +22,21 @@ nav = [
         { "001 · Single-host runtime" = "adr/001-single-host-call.md" },
         { "002 · Local voice presets" = "adr/002-local-voice-presets.md" },
         { "003 · Voice interruption" = "adr/003-barge-in.md" },
+        { "004 · Scoped work" = "adr/004-scoped-work.md" },
+        { "005 · Warm speech models" = "adr/005-warm-speech-models.md" },
+        { "006 · Local conversation scoring" = "adr/006-local-conversation-scoring.md" },
+        { "007 · On-demand recognition" = "adr/007-on-demand-recognition.md" },
+        { "008 · Fluid Speech Pro on Vulkan" = "adr/008-fluid-vulkan.md" },
+        { "009 · Pocket TTS on CUDA" = "adr/009-pocket-tts-cuda.md" },
+        { "010 · Scoped speech settings" = "adr/010-scoped-speech-settings.md" },
+        { "011 · Jevos on Vulkan" = "adr/011-jevos-vulkan.md" },
+        { "012 · Phone audio" = "adr/012-phone-audio.md" },
     ] },
+]
+
+[project.markdown_extensions]
+pymdownx.superfences.custom_fences = [
+    { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
 ]
 
 [project.theme]

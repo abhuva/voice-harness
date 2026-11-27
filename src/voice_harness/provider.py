@@ -6,7 +6,7 @@ from email.utils import parsedate_to_datetime
 import json
 import time
 
-from .contracts import VoiceError
+from .contracts import DeliveryConfirmed, ReplyCompleted, ReplyFailed, ReplyText, VoiceError
 
 
 BASE = "https://api.kindroid.ai/v1/"
@@ -15,7 +15,7 @@ HISTORY_SPACING = 15
 HISTORY_LOOKBACK_HOURS = 24
 
 
-def stream_reply(manager, key, kin_id, message, stop):
+def stream_reply(manager, key, kin_id, message, stop, *, on_submit=None):
     """A single cancellable POST on the call worker's Qt event dispatcher."""
     from PyQt6.QtCore import QEventLoop, QIODevice, QTimer, QUrl
     from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
@@ -57,6 +57,8 @@ def stream_reply(manager, key, kin_id, message, stop):
     request.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute,
                          QNetworkRequest.RedirectPolicy.ManualRedirectPolicy)
     request.setTransferTimeout(180_000)
+    if on_submit is not None:
+        on_submit(time.monotonic())
     response = manager.post(request, upload)
     upload.setParent(response)
     response.setReadBufferSize(65536)
@@ -205,6 +207,25 @@ def read_history(get, key, kin_id, guard, stop):
         raise VoiceError("Could not load the Kindroid history page.") from None
 
 
+def reply_events(chunks, stop, *, on_first_text=None):
+    """Translate Kindroid's first valid text into its delivery acknowledgment."""
+    confirmed = False
+    try:
+        for text in chunks:
+            if not confirmed:
+                if on_first_text is not None:
+                    on_first_text()
+                confirmed = True
+                yield DeliveryConfirmed()
+            yield ReplyText(text)
+        if not stop.is_set():
+            yield ReplyCompleted()
+    except VoiceError as exc:
+        yield ReplyFailed(str(exc), "confirmed" if confirmed else "uncertain")
+    finally:
+        chunks.close()
+
+
 class KindroidClient:
     def __init__(self, key, kin):
         from PyQt6.QtNetwork import QNetworkAccessManager
@@ -213,8 +234,10 @@ class KindroidClient:
         self.kin = kin
         self.manager = QNetworkAccessManager()
 
-    def send(self, message, stop):
-        return stream_reply(self.manager, self.key, self.kin, message, stop)
+    def send(self, request, stop):
+        chunks = stream_reply(self.manager, self.key, self.kin, request.text, stop,
+                              on_submit=request.on_submit)
+        return reply_events(chunks, stop, on_first_text=request.on_first_text)
 
     def history(self, guard, stop):
         import requests

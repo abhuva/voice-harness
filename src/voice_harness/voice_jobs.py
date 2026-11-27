@@ -1,14 +1,13 @@
 """Offline operations submitted through the same foreground gate as calls."""
 
-import re
-import textwrap
-
 from .cloning import clone_voice
 from .contracts import VoiceError
 from .encoder import PocketEncoder
 from .harness import Outcome
 from .recordings import import_recording
-from .speaker import PocketSpeaker
+from .playback import AudioPlayback
+from .segments import paragraph_segments
+from .speaker import SynthesizedSpeech
 
 
 def import_clips(library, sources, worker, stop):
@@ -32,30 +31,34 @@ def import_clips(library, sources, worker, stop):
 
 
 def build_preset(library, recipe, worker, stop):
-    ident = clone_voice(library, PocketEncoder(library.root), recipe, stop,
-                        worker.stage.emit, worker.progress.emit)
+    encoder = PocketEncoder(library.root,
+                            process_started=lambda pid: worker.harness.watch_process(worker.job, pid))
+    ident = clone_voice(library, encoder, recipe, stop, worker.stage.emit, worker.progress.emit)
     if ident is not None:
         worker.cloned.emit(ident)
         return Outcome("Voice preset saved.")
     return Outcome("Voice cloning stopped.")
 
 
-def preview_voice(directory, settings, text, worker, stop):
-    paragraphs = re.split(r"\n(?:[^\S\n]*\n)+", text.strip())
-    segments = [line for paragraph in paragraphs for line in textwrap.wrap(paragraph, width=480)]
+def preview_voice(factory, settings, text, worker, stop):
+    segments = paragraph_segments(text)
     if not segments:
         raise VoiceError("Enter text to preview.")
-    speaker = PocketSpeaker(directory, settings, worker.speaker_level.emit)
-    try:
-        worker.stage.emit("Loading Pocket TTS for preview")
-        speaker.prepare(stop)
-        if stop.is_set():
+    harness, job = worker.harness, worker.job
+
+    def create():
+        return factory.create(settings, process_started=lambda pid: harness.watch_process(job, pid))
+
+    with harness.models.borrow(factory.key(settings), create, stop,
+                               worker.stage.emit, job.work.scope) as model:
+        if model is None:
             return "Voice preview stopped."
+        harness.watch_process(job, model.process_id, warm=True)
+        harness.ready(job)
+        speaker = SynthesizedSpeech(model, AudioPlayback(settings, worker.speaker_level.emit))
         total = len(segments)
         worker.progress.emit(0, total, "preview segments queued for playback")
         remaining = iter(segments)
         speaker.speak(lambda _cancel: next(remaining, None), stop, worker.stage.emit,
                       played=lambda done: worker.progress.emit(done, total, "preview segments queued for playback"))
-    finally:
-        speaker.close()
     return "Voice preview finished."

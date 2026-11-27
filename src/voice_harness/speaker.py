@@ -1,39 +1,24 @@
-"""Resident Pocket TTS and Windows audio playback."""
+"""Compose a synthesizer and a PCM sink with one segment rendering ahead."""
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
-from .contracts import VoiceError
-from .engine import ResidentEngine
-from .output_audio import OutputAudio, output_levels
-from .presets import VoiceLibrary
-from .render_device import ReferencedOutput
-from .tempo import playback_blocks
+from .playback import AudioPlayback
+from .synthesis import PocketSynthesizer
 
 
-class PocketSpeaker:
-    def __init__(self, directory, settings, meter, *, reference=None):
-        self.directory = directory
-        self.playback = settings
-        self.meter = meter
-        self.reference = reference
-        self.engine = ResidentEngine(directory)
+class SynthesizedSpeech:
+    def __init__(self, synthesis, sink):
+        self.synthesis = synthesis
+        self.sink = sink
 
     def prepare(self, stop):
-        config, profile = VoiceLibrary(self.directory).resolve(self.playback)
-        weights = {"english.yaml": "model.safetensors", "cloning.yaml": "cloning.safetensors",
-                   "english-7m.yaml": "model-7m.safetensors"}[config]
-        required = (config, profile, weights, "tokenizer.model", "voice-engine.exe")
-        if not all((self.directory / name).is_file() for name in required):
-            raise VoiceError("Restore the Pocket TTS model files and voice-engine.exe.")
-        self.engine.load(self.playback, config, profile, stop)
+        self.synthesis.prepare(stop)
 
     def close(self):
-        self.engine.unload()
+        self.synthesis.close()
 
-    def speak(self, next_segment, stop, stage, *, played=None):
-        import sounddevice as sd
-
+    def speak(self, next_segment, stop, stage, *, played=None, first_audio=None):
         abandoned = Event()
 
         class PlaybackCancellation:
@@ -45,53 +30,35 @@ class PocketSpeaker:
         def render_next():
             segment = next_segment(token)
             if segment is not None and not token.is_set():
-                return self.engine.render(segment, token)
+                return self.synthesis.render(segment, token)
             return None
 
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pocket-render") as producer:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="speech-render") as producer:
             pending = producer.submit(render_next)
-            device = None
-            started = False
-            drained = False
-            try:
-                output = OutputAudio(self.engine.rate)
-                if self.reference is None:
-                    device = sd.RawOutputStream(samplerate=self.engine.rate, channels=1,
-                                                dtype="float32", latency="low")
-                else:
-                    device = ReferencedOutput(self.engine.rate, self.reference, token)
-                index = 0
-                while not token.is_set():
-                    pcm = pending.result()
-                    if pcm is None or token.is_set():
-                        break
+
+            def next_pcm():
+                nonlocal pending
+                pcm = pending.result()
+                if pcm is not None and not token.is_set():
                     pending = producer.submit(render_next)
-                    if not started:
-                        device.start()
-                        started = True
-                    index += 1
-                    if played is None:
-                        stage(f"Playing Kindroid reply · segment {index}")
-                    for block in playback_blocks(pcm, self.engine.rate, lambda: self.playback.speed):
-                        if token.is_set():
-                            break
-                        tuning = self.playback
-                        block = output.process(block, (tuning.bass, tuning.mid, tuning.treble))
-                        device.write(block)
-                        self.meter(*output_levels(block))
-                    if played is not None and not token.is_set():
-                        played(index)
-                if started and not token.is_set():
-                    device.stop()
-                    drained = True
-            except (OSError, sd.PortAudioError):
-                raise VoiceError("Could not play speech. Check the Windows output device.") from None
+                return pcm
+
+            try:
+                hooks = {"first_audio": first_audio} if first_audio is not None else {}
+                self.sink.play(next_pcm, token, stage, played=played, **hooks)
             finally:
                 abandoned.set()
-                if device is not None:
-                    try:
-                        if started and not drained:
-                            device.abort()
-                    finally:
-                        device.close()
-                self.meter(-100.0, -100.0)
+
+
+class PocketSpeaker(SynthesizedSpeech):
+    def __init__(self, directory, settings, meter, *, reference=None, process_started=None):
+        super().__init__(PocketSynthesizer(directory, settings, process_started=process_started),
+                         AudioPlayback(settings, meter, reference=reference))
+
+    @property
+    def playback(self):
+        return self.sink.settings
+
+    @playback.setter
+    def playback(self, settings):
+        self.sink.settings = settings

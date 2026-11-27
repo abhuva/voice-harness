@@ -4,6 +4,7 @@ import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass
 import os
+from pathlib import Path
 import time
 
 
@@ -22,21 +23,31 @@ class ResourceSample:
         engine_cpu = (f"{self.pocket_cpu_seconds:.2f} s" if self.pocket_cpu_seconds is not None
                       else "unavailable")
         return (f"Resident working set · Python {memory(self.host_bytes)} · "
-                f"Pocket TTS {memory(self.pocket_bytes)}\n"
-                f"CPU during load · Python {self.host_cpu_seconds:.2f} s · "
-                f"Pocket TTS {engine_cpu} · {self.elapsed_seconds:.2f} s elapsed")
+                f"child workers {memory(self.pocket_bytes)}\n"
+                f"CPU during startup · Python {self.host_cpu_seconds:.2f} s · "
+                f"child workers {engine_cpu} · {self.elapsed_seconds:.2f} s elapsed")
 
 
 def resident_sample(start, cpu_start, pocket_pid):
-    host_bytes, _ = _process_sample(os.getpid())
-    pocket_bytes, pocket_cpu = _process_sample(pocket_pid) if pocket_pid else (0, 0.0)
+    host_bytes, _ = process_sample(os.getpid())
+    pocket_bytes, pocket_cpu = process_sample(pocket_pid) if pocket_pid else (0, 0.0)
     return ResourceSample(host_bytes, pocket_bytes, time.process_time() - cpu_start,
                           pocket_cpu, time.monotonic() - start)
 
 
-def _process_sample(pid):
+def working_set(pid=None):
+    return process_sample(pid or os.getpid())[0]
+
+
+def process_sample(pid):
     if os.name != "nt":
-        return None, None
+        try:
+            fields = Path(f"/proc/{pid}/statm").read_text(encoding="ascii").split()
+            stat = Path(f"/proc/{pid}/stat").read_text("ascii").rsplit(")", 1)[1].split()
+            seconds = (int(stat[11]) + int(stat[12])) / os.sysconf("SC_CLK_TCK")
+            return int(fields[1]) * os.sysconf("SC_PAGE_SIZE"), seconds
+        except (OSError, ValueError, IndexError):
+            return None, None
 
     class MemoryCounters(ctypes.Structure):
         _fields_ = [("size", wintypes.DWORD), ("faults", wintypes.DWORD)] + [

@@ -1,6 +1,8 @@
 """One resident Pocket TTS process, serialized by the desktop audio worker."""
 
 import json
+import os
+from pathlib import Path
 from queue import Empty, Queue
 import struct
 import subprocess
@@ -28,9 +30,28 @@ def _read_packets(pipe, packets):
         packets.put((b"X", b""))
 
 
+def cuda_command(runtime):
+    if runtime is not None:
+        try:
+            values = (line.split("=", 1) for line in (runtime / "pyvenv.cfg").read_text("utf-8").splitlines()
+                      if "=" in line)
+            config = {key.strip(): value.strip() for key, value in values}
+            python = Path(config["home"]) / "python.exe"
+            site = runtime / "Lib/site-packages"
+            if python.is_absolute() and python.is_file() and (site / "torch/__init__.py").is_file():
+                # Launch the real interpreter so its PID owns the CUDA context and can be reaped.
+                worker = Path(__file__).with_name("pocket_cuda_worker.py").resolve()
+                return [str(python), "-I", "-S", "-u", str(worker), str(site.resolve())]
+        except (OSError, KeyError, UnicodeError):
+            pass
+    raise VoiceError("Install Pocket TTS CUDA with scripts/setup-pocket-cuda.ps1, or select CPU in TTS.")
+
+
 class ResidentEngine:
-    def __init__(self, directory):
+    def __init__(self, directory, *, process_started=None, cuda_runtime=None):
         self.directory = directory
+        self.process_started = process_started
+        self.cuda_runtime = cuda_runtime
         self.child = None
         self.reader = None
         self.settings = None
@@ -84,12 +105,24 @@ class ResidentEngine:
         self.unload()
         if stop.is_set():
             return
+        cuda = settings.backend == "cuda"
+        env = None
+        if cuda:
+            command = cuda_command(self.cuda_runtime)
+            env = {key: os.environ[key] for key in ("SystemRoot", "WINDIR", "PATH", "TEMP", "TMP", "LOCALAPPDATA")
+                   if key in os.environ}
+            env["HF_HUB_OFFLINE"] = "1"
+        else:
+            command = [str(self.directory / "voice-engine.exe")]
+        process_started, self.process_started = self.process_started, None
         try:
             self.child = subprocess.Popen(
-                [str(self.directory / "voice-engine.exe"), config, profile, str(settings.temperature)],
+                [*command, config, profile, str(settings.temperature)],
                 cwd=self.directory, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW,
+                stderr=subprocess.DEVNULL, env=env, creationflags=subprocess.CREATE_NO_WINDOW,
             )
+            if process_started is not None:
+                process_started(self.child.pid)
             self.packets = Queue()
             self.reader = Thread(target=_read_packets, args=(self.child.stdout, self.packets), daemon=True)
             self.reader.start()
@@ -102,6 +135,8 @@ class ResidentEngine:
             self.settings = settings
         except (OSError, VoiceError) as exc:
             self.unload()
+            if cuda and not stop.is_set():
+                raise VoiceError("Pocket TTS CUDA could not load. Check the GPU and free VRAM, or select CPU in TTS.") from None
             if isinstance(exc, VoiceError):
                 raise
             raise VoiceError("Could not launch voice-engine.exe. Restore the local voice bundle.") from None
