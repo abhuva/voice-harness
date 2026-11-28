@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from .contracts import CallInput, VoiceError
 from .fluid_vulkan import FLUID_VULKAN_DIRECTORY
+from .llm import parse_profiles
 from .presets import OutputSettings, SynthesisSettings, VoiceLibrary
 from .recognizer import STT_MODELS
 from .receiver import receiver_id
@@ -70,6 +71,14 @@ class Settings:
     def load_phone_output(self):
         return self._read_profile().get("phone_output", "phone")
 
+    def load_llm(self):
+        return parse_profiles(self._read_profile().get("llm"))
+
+    def save_llm(self, profiles, active):
+        section = {"active": active, "profiles": [asdict(profile) for profile in profiles.values()]}
+        parse_profiles(section)
+        self._save(llm=section)
+
     def save_phone_output(self, destination):
         if destination not in ("phone", "desktop") and not (
             isinstance(destination, str) and destination.startswith("receiver:")
@@ -103,23 +112,35 @@ class Settings:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def credentials(self):
+    def _credentials(self, names):
         values = {}
+        with self.env_file.open(encoding="utf-8-sig") as config:
+            for line in config:
+                name, separator, raw = line.partition("=")
+                name = name.strip()
+                if separator and name in names:
+                    parts = shlex.split(raw, comments=True)
+                    if len(parts) != 1 or not parts[0].isascii() or not parts[0].isprintable():
+                        raise ValueError
+                    values[name] = parts[0]
+        if not all(values.get(name) for name in names):
+            raise ValueError
+        return values
+
+    def credentials(self):
         try:
-            with self.env_file.open(encoding="utf-8-sig") as config:
-                for line in config:
-                    name, separator, raw = line.partition("=")
-                    name = name.strip()
-                    if separator and name in ("KINDROID_API_KEY", "KINDROID_AI_ID"):
-                        parts = shlex.split(raw, comments=True)
-                        if len(parts) != 1 or not parts[0].isascii():
-                            raise ValueError
-                        values[name] = parts[0]
+            values = self._credentials(("KINDROID_API_KEY", "KINDROID_AI_ID"))
         except (OSError, ValueError):
             raise VoiceError("Set KINDROID_API_KEY and KINDROID_AI_ID in the local .env file.") from None
-        if not all(values.get(name) for name in ("KINDROID_API_KEY", "KINDROID_AI_ID")):
-            raise VoiceError("Set KINDROID_API_KEY and KINDROID_AI_ID in the local .env file.")
         return values["KINDROID_API_KEY"], values["KINDROID_AI_ID"]
+
+    def reply_key(self, name):
+        if not name:
+            return ""
+        try:
+            return self._credentials((name,))[name]
+        except (OSError, ValueError):
+            raise VoiceError(f"Set {name} in the local .env file for this LLM profile.") from None
 
 
 def _upgrade_profile(profile):

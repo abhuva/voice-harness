@@ -14,6 +14,7 @@ from voice_harness.decisions import CAPABILITY, DecisionHistory, DecisionSetting
 from voice_harness.harness import Harness
 from voice_harness.jevos import answers
 from voice_harness.jevos_vulkan import VULKAN_LABEL
+from voice_harness.office import OfficeStatus
 from voice_harness.state import State
 from voice_harness.work_types import ResourceProfile, WorkRequest
 
@@ -203,6 +204,38 @@ class DecisionTests(unittest.TestCase):
         self.available = 2176 * mib
         self.released.set()
         self.wait_for(lambda: self.decisions.history.latest(None)[1])
+
+    def test_office_only_waits_and_dispatches_without_local_model_ram(self):
+        online = Event()
+        claims = []
+
+        class Office:
+            def __init__(self, url):
+                pass
+
+            def status(self):
+                if online.is_set():
+                    return OfficeStatus("Fixture office", "OpenVINO", "ready", 512, None)
+                return None
+
+            def score(self, scope, messages, questions, stop):
+                claims.append((scope, [message.body for message in messages]))
+                return (0.6,)
+
+        self.decisions.office = Office
+        self.decisions.configure(replace(self.decisions.settings, route="office"))
+        for number in range(3):
+            self.message(number, str(number))
+        self.wait_for(lambda: "office worker unreachable" in self.decisions.status[0])
+        self.assertFalse(self.started.is_set())
+        self.assertEqual(claims, [])
+        online.set()
+        self.wait_for(lambda: self.decisions.history.latest(None)[1])
+        row, = self.decisions.history.latest(None)[1]
+        self.assertIn("Fixture office", row.model)
+        self.assertEqual(claims[0][1], ["0", "1", "2"])
+        self.assertFalse(self.started.is_set())
+        self.assertEqual(self.harness.models.snapshot(), ())
 
     def test_gpu_scoring_yields_to_speech_in_an_existing_call(self):
         self.available = 8 * 2**30

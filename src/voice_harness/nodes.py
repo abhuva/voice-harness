@@ -12,10 +12,11 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QPushButton, QTableWidget, QTab
 
 
 class NodesPanel(QWidget):
-    def __init__(self, gateway, host_capabilities, show_routing):
+    def __init__(self, gateway, host_capabilities, show_routing, *, office_node=lambda: None):
         super().__init__()
         self.gateway = gateway
         self.host_capabilities = host_capabilities
+        self.office_node = office_node
         self.nodes = []
         self.tailnet_available = False
         self.rows = None
@@ -90,9 +91,10 @@ class NodesPanel(QWidget):
         self.render()
 
     def render(self):
-        self.notice.setText("Tailscale presence and connected audio endpoints." if self.tailnet_available
-                            else "Tailscale status unavailable. Connected Voice Harness endpoints are shown below.")
+        self.notice.setText("Tailscale devices and connected Voice Harness capabilities." if self.tailnet_available
+                            else "Tailscale status unavailable. Connected Voice Harness capabilities are shown below.")
         receivers = self.gateway.receivers() if self.gateway else ()
+        office = self.office_node()
         phone = self.gateway.active if self.gateway else None
         if phone is not None and phone.closed.is_set():
             phone = None
@@ -113,6 +115,9 @@ class NodesPanel(QWidget):
                     matches.add(receiver.ident)
             presence = ("Online" if node.get("Online") else "Offline") if self.tailnet_available else "Unknown"
             name = node.get("HostName") or node.get("DNSName") or "Unknown device"
+            if office and not local and name.casefold() == office[0].casefold():
+                capabilities.append(office[2])
+                office = None
             rows.append((name + (" (this PC)" if local else ""), presence,
                          " · ".join(capabilities) or "No Voice Harness endpoint connected"))
             hostname = (node.get("DNSName") or "").rstrip(".")
@@ -134,6 +139,9 @@ class NodesPanel(QWidget):
             if receiver.ident not in matches:
                 rows.append((receiver.name, "Unmatched", "Playback ready"))
                 routes.append(("", None))
+        if office:
+            rows.append(office)
+            routes.append(("", None))
         snapshot = list(zip(rows, routes))
         if snapshot == self.rows:
             return

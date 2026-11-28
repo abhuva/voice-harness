@@ -22,3 +22,5 @@ reviewed: 2026-11-26
 | [ADR-011 Selectable Vulkan backend for Jevos](011-jevos-vulkan.md) | Accepted |
 | [ADR-012 Phone audio over a private connection](012-phone-audio.md) | Accepted |
 | [ADR-013 Tailnet presence and routed reply playback](013-tailnet-routing.md) | Accepted |
+| [ADR-014 Named LLM reply profiles](014-llm-profiles.md) | Accepted |
+| [ADR-015 Office-only Jevos scoring](015-office-jevos.md) | Accepted |

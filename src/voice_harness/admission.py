@@ -60,8 +60,11 @@ class Admission:
         if accelerator and accelerator > accelerator_available:
             return (f"waiting for VRAM ({_mib(accelerator, round_up=True)} VRAM needed, "
                     f"{_mib(accelerator_available)} available for this job)")
-        available = self.available()
         demand = profile.memory
+        if not interactive and demand == 0:
+            # Dispatch using existing buffers does not compete for model RAM.
+            return None
+        available = self.available()
         if interactive and not active:
             if available is None or demand is None or (profile.advisory_memory and not strict_memory):
                 return None

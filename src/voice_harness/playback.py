@@ -42,7 +42,7 @@ class AudioPlayback:
                     raise VoiceError("Playback sample rate changed within a stream.")
                 index += 1
                 if played is None:
-                    stage(f"Playing Kindroid reply · segment {index}")
+                    stage(f"Playing reply · segment {index}")
                 for block in playback_blocks(clip.data, rate, lambda: self.settings.speed):
                     if stop.is_set():
                         break

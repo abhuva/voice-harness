@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 
 from .contracts import VoiceError
 from .decisions import DEVICES, QUESTIONS, save_settings, validate_settings
+from .office_worker import loopback_url
 
 
 QUESTION_LABELS = dict(zip(QUESTIONS, (
@@ -45,6 +46,14 @@ class DecisionControls(QWidget):
         self.enabled = QCheckBox("Enable Jevos decision scoring")
         self.enabled.setChecked(settings.enabled)
         form.addRow(self.enabled)
+        self.route = QComboBox()
+        self.route.addItem("Local laptop", "local")
+        self.route.addItem("Office only", "office")
+        self.route.setCurrentIndex(self.route.findData(settings.route))
+        form.addRow("Run scoring &on", self.route)
+        self.office_url = QLineEdit(settings.office_url)
+        self.office_url.setToolTip("Local address of the SSH tunnel to the office worker.")
+        form.addRow("Office &tunnel URL", self.office_url)
         self.backend = QComboBox()
         for ident, label in DEVICES.items():
             self.backend.addItem(label, ident)
@@ -75,6 +84,7 @@ class DecisionControls(QWidget):
             field.setEnabled(settings.enabled)
             self.enabled.toggled.connect(field.setEnabled)
         self.enabled.toggled.connect(self.update_fields)
+        self.route.currentIndexChanged.connect(self.update_fields)
         self.backend.currentIndexChanged.connect(self.update_fields)
         self.status = QLabel()
         self.status.setAccessibleName("Jevos settings status")
@@ -85,11 +95,15 @@ class DecisionControls(QWidget):
         self.update_fields()
 
     def update_fields(self):
-        cpu = self.enabled.isChecked() and self.backend.currentData() == "cpu"
+        local = self.route.currentData() == "local"
+        self.backend.setEnabled(local)
+        self.office_url.setEnabled(not local)
+        cpu = local and self.enabled.isChecked() and self.backend.currentData() == "cpu"
         self.directory.setEnabled(cpu)
         self.browse_button.setEnabled(cpu)
         state = "On" if self.settings.enabled else "Off"
-        self.status.setText(f"Saved · {state} · {DEVICES[self.settings.backend]}")
+        target = "Office only" if self.settings.route == "office" else DEVICES[self.settings.backend]
+        self.status.setText(f"Saved · {state} · {target}")
 
     def browse(self):
         path = QFileDialog.getExistingDirectory(self, "Choose the Jevos v5 installation", self.directory.text())
@@ -97,14 +111,22 @@ class DecisionControls(QWidget):
             self.directory.setText(path)
 
     def apply(self):
+        notice = ""
         try:
             backend = self.backend.currentData()
+            route = self.route.currentData()
+            office_url = self.office_url.text()
             if self.enabled.isChecked():
                 questions = [line.strip() for line in self.questions.toPlainText().splitlines() if line.strip()]
                 settings = validate_settings(True, self.directory.text(), questions, backend=backend,
-                                             vulkan_directory=self.vulkan_directory)
+                                             vulkan_directory=self.vulkan_directory, route=route, office_url=office_url)
             else:
-                settings = replace(self.settings, enabled=False, backend=backend)
+                try:
+                    office_url = loopback_url(office_url.strip())
+                except ValueError:
+                    office_url = self.settings.office_url
+                    notice = " · Kept the saved tunnel URL. Enter a valid loopback URL to change it."
+                settings = replace(self.settings, enabled=False, backend=backend, route=route, office_url=office_url)
             save_settings(self.path, settings)
         except VoiceError as exc:
             self.status.setText(str(exc))
@@ -113,6 +135,8 @@ class DecisionControls(QWidget):
         else:
             self.settings = settings
             self.update_fields()
+            if notice:
+                self.status.setText(self.status.text() + notice)
             self.saved.emit(settings)
 
 

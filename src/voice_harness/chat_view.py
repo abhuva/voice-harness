@@ -14,7 +14,7 @@ class ChatView(QScrollArea):
     def __init__(self):
         super().__init__()
         self.setWidgetResizable(True)
-        self.setAccessibleName("Kindroid conversation")
+        self.setAccessibleName("Conversation")
         page = QWidget()
         self.rows = QVBoxLayout(page)
         self.rows.setAlignment(Qt.AlignmentFlag.AlignTop)

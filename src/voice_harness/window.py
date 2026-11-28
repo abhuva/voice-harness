@@ -17,6 +17,8 @@ from .contracts import CallInput, VoiceError
 from .decisions import Decisions, read_settings
 from .decision_view import DecisionControls, DecisionHeatmap
 from .level_meter import LevelMeter
+from .llm import KINDROID, parse_profiles
+from .llm_view import LlmControls
 from .monitor_window import MonitorWindow
 from .playback_controls import PlaybackControls
 from .presets import OutputSettings, SynthesisSettings, VoiceLibrary
@@ -131,8 +133,12 @@ class Window(QWidget):
         self.phone_gateway = None
         layout.addWidget(tabs)
         chat_page = QWidget()
-        tabs.addTab(chat_page, "Kindroid chat")
+        tabs.addTab(chat_page, "Chat")
         chat_layout = QVBoxLayout(chat_page)
+        reply_picker = QFormLayout()
+        self.reply_profile = QComboBox()
+        reply_picker.addRow("Reply &profile", self.reply_profile)
+        chat_layout.addLayout(reply_picker)
         columns = QSplitter(Qt.Orientation.Horizontal)
         columns.setChildrenCollapsible(False)
         chat_layout.addWidget(columns, 1)
@@ -179,6 +185,20 @@ class Window(QWidget):
         self.tts.preview_requested.connect(self.start_preview)
         self.tts.save_requested.connect(self.save_tts)
         tabs.addTab(self.tts, "TTS")
+        llm_error = ""
+        try:
+            profiles, active = settings.load_llm()
+        except VoiceError as exc:
+            llm_error = str(exc)
+            profiles, active = parse_profiles(None)
+        self.llm_ready = not llm_error
+        self.llm = LlmControls(settings, profiles, active)
+        if llm_error:
+            self.llm.status.setText(llm_error + " Save an LLM profile to restore the reply settings.")
+        self.llm.saved.connect(self.saved_llm_profiles)
+        self.refresh_reply_profiles()
+        self.reply_profile.currentTextChanged.connect(self.select_reply_profile)
+        tabs.addTab(self.llm, "LLM")
         self.cloning = CloningControls(self.library, recipes)
         self.cloning.import_requested.connect(self.start_import)
         self.cloning.clone_requested.connect(self.start_clone)
@@ -189,7 +209,7 @@ class Window(QWidget):
 
         self.delivery = QLabel()
         self.delivery.setWordWrap(True)
-        self.delivery.setText("Check the Kindroid conversation for the last message before starting another call.")
+        self.delivery.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.delivery)
 
         controls = QHBoxLayout()
@@ -270,26 +290,55 @@ class Window(QWidget):
         except StateError:
             state_ok = pending = False
             self.status.setText("Could not read the local delivery state.")
-        self.start.setEnabled(state_ok and not active and not pending and not self.closing)
+        self.start.setEnabled(state_ok and not active and not pending and not self.closing and self.llm_ready)
         self.stop.setEnabled(active and not self.worker.job.stop.is_set())
         self.review.setVisible(pending)
         self.review.setEnabled(not active)
         self.delivery.setVisible(pending)
+        if pending:
+            self.delivery.setText(f"Review the last {self.llm.active} request before starting another call.")
         self.dictation.setEnabled(not active)
         self.strict_memory.setEnabled(not active)
         self.tts.setEnabled(not active)
+        self.llm.setEnabled(not active and not pending)
+        self.reply_profile.setEnabled(not active and not pending)
         self.cloning.setEnabled(not active)
         self.save.setEnabled(not active)
         self.playback.mute.setEnabled(not active)
         self.playback.save.setEnabled(not active)
 
     def start_history(self):
-        if self.history_requested or not self.settings.env_file.is_file():
+        if (not self.llm_ready or self.llm.active != KINDROID or self.history_requested
+                or not self.settings.env_file.is_file()):
             return
         self.history_requested = True
         if self.previous.text() != "Ready":
             self.previous.show()
         self.begin("Recent history", partial(load_history, self.settings), "Loading recent Kindroid history")
+
+    def refresh_reply_profiles(self):
+        self.reply_profile.blockSignals(True)
+        self.reply_profile.clear()
+        self.reply_profile.addItems([KINDROID, *self.llm.profiles])
+        self.reply_profile.setCurrentText(self.llm.active)
+        self.reply_profile.blockSignals(False)
+
+    def saved_llm_profiles(self):
+        self.llm_ready = True
+        self.refresh_reply_profiles()
+        self.update_controls()
+
+    def select_reply_profile(self, name):
+        if not self.llm_ready:
+            self.refresh_reply_profiles()
+            return
+        try:
+            self.llm.select(name)
+        except (OSError, VoiceError):
+            self.refresh_reply_profiles()
+            self.status.setText("Could not save the reply profile selection.")
+        else:
+            self.decisions.clear_context()
 
     def enable_phone(self, origin, pairing, gateway=None):
         self.phone_gateway = gateway
@@ -405,12 +454,15 @@ class Window(QWidget):
         if self.closing:
             blocked("Voice Harness is closing.")
             return
+        if not self.llm_ready:
+            blocked("Review the reply profiles in the laptop’s LLM tab.")
+            return
         if self.worker is not None:
             blocked("The laptop is busy. Wait for the current operation to end.")
             return
         try:
             if self.harness.state.pending_delivery():
-                blocked("Review the unresolved Kindroid delivery on the laptop.")
+                blocked("Review the unresolved reply request on the laptop.")
                 return
         except StateError:
             self.update_controls()
@@ -429,7 +481,8 @@ class Window(QWidget):
                 return
         if (desktop_phone_output or receiver is not None) and phone.mode == "rtc" and playback.speed:
             call_input = replace(call_input, interrupt=False)
-        self.call = CallOperation(self.settings, call_input, playback, phone=phone,
+        self.call = CallOperation(self.settings, call_input, playback,
+                                  reply_profile=self.llm.profiles.get(self.llm.active), phone=phone,
                                   desktop_phone_output=desktop_phone_output, receiver=receiver)
         keys = [recognition_key(self.settings.dictate, call_input, vulkan_directory=self.settings.fluid_vulkan)]
         if playback.speed:

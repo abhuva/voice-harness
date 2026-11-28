@@ -110,6 +110,21 @@ class WindowTests(unittest.TestCase):
             self.wait_for(lambda: self.window.worker is None)
         self.assertTrue(self.window.strict_memory.isEnabled())
 
+    def test_llm_tab_saves_profile_and_next_call_uses_chat_selection(self):
+        controls = self.window.llm
+        controls.name.setText("Fixture reply")
+        controls.stream.setChecked(False)
+        controls.save_profile()
+        self.assertEqual(self.window.reply_profile.currentText(), "Kindroid")
+        self.window.reply_profile.setCurrentText("Fixture reply")
+        saved, active = self.settings.load_llm()
+        self.assertEqual(active, "Fixture reply")
+        self.assertFalse(saved[active].stream)
+        with patch("voice_harness.window.CallOperation", return_value=lambda *_: "Call ended.") as factory:
+            self.window.start.click()
+            self.wait_for(lambda: self.window.worker is None)
+        self.assertEqual(factory.call_args.kwargs["reply_profile"], saved[active])
+
     def test_phone_uses_desktop_call_slot_and_respects_delivery_guard(self):
         self.window.enable_phone("http://127.0.0.1:8768", PhonePairing())
         self.state.claim_delivery("prior")
@@ -416,6 +431,20 @@ class WindowTests(unittest.TestCase):
         controls.save.click()
         self.assertEqual(self.window.decisions.settings.backend, "vulkan")
         self.assertFalse(self.window.decision_poll.isActive())
+
+    def test_jevos_can_be_turned_off_with_an_invalid_unsaved_office_url(self):
+        controls = self.window.decision_controls
+        controls.route.setCurrentIndex(controls.route.findData("office"))
+        controls.enabled.setChecked(True)
+        controls.save.click()
+        self.assertTrue(self.window.decisions.settings.enabled)
+        controls.office_url.setText("invalid")
+        controls.enabled.setChecked(False)
+        controls.save.click()
+        self.wait_for(lambda: self.window.decisions.stopped)
+        self.assertFalse(self.window.decisions.settings.enabled)
+        self.assertEqual(self.window.decisions.settings.route, "office")
+        self.assertEqual(self.window.decisions.settings.office_url, "http://127.0.0.1:18769")
 
     def test_clone_progress_and_explicit_tts_selection(self):
         release = Event()

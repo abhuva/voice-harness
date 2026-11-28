@@ -9,6 +9,7 @@ from .call import run_call
 from .contracts import Message
 from .echo import EchoProcessor, PlaybackReference
 from .fluid_vulkan import COLD_HOST_BYTES, FluidVulkan
+from .llm import ChatClient
 from .microphone import WindowsMicrophone
 from .provider import KindroidClient
 from .playback import AudioPlayback
@@ -59,10 +60,12 @@ def call_profile(call_input, playback, synthesis):
 
 
 class CallOperation:
-    def __init__(self, settings, call_input, playback, *, phone=None, desktop_phone_output=False, receiver=None):
+    def __init__(self, settings, call_input, playback, *, reply_profile=None, phone=None,
+                 desktop_phone_output=False, receiver=None):
         self.settings = settings
         self.call_input = call_input
         self.playback = playback
+        self.reply_profile = reply_profile
         self.phone = phone
         self.desktop_phone_output = desktop_phone_output
         self.receiver = receiver
@@ -74,7 +77,9 @@ class CallOperation:
             self.speaker.sink.settings = playback
 
     def __call__(self, worker, stop):
-        provider = KindroidClient(*self.settings.credentials())
+        profile = self.reply_profile
+        provider = (KindroidClient(*self.settings.credentials()) if profile is None
+                    else ChatClient(profile, self.settings.reply_key(profile.credential)))
         reference = None
         if self.phone is None:
             reference = PlaybackReference()

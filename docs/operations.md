@@ -130,6 +130,78 @@ host working set during cold load. These observations vary with the machine
 and input. A GPU startup or decode failure appears in the call status. Select
 **CPU** before calling again if the Vulkan device is unavailable.
 
+## Reply profiles
+
+The **Chat** tab’s **Reply profile** selector saves the provider for the next
+desktop or phone call. **Kindroid** is the default. Open **LLM** to edit the
+example **Gemini Fast** profile or click **New profile** to create another.
+**Save LLM profile** saves the form. Choose the profile separately in **Chat**.
+
+The OpenRouter example uses the full URL
+`https://openrouter.ai/api/v1/chat/completions` and the model ID
+`google/gemini-2.5-flash-lite`. Add `OPENROUTER_API_KEY` to the local `.env`
+file before starting a call. The profile stores the credential name.
+Streaming lets TTS begin while text arrives. The temperature, reply token limit,
+and optional system prompt apply to that profile. A new call starts fresh and
+only carries completed turns from its own session. Kindroid history is loaded
+on launch with Kindroid selected. [OpenRouter chat API](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion)
+
+A compatible endpoint can use a different HTTPS URL and its own credential
+variable. A loopback HTTP endpoint can use an empty credential field. An
+interrupted or uncertain send goes through the existing delivery review.
+
+## LFM3 Playground
+
+Double-click **Start LFM3 Playground.bat** at the repository root. The launcher
+starts the installed local LFM3 server when needed. The playground opens as a
+separate text-only window with the local endpoint and model already filled in.
+Use **Model** to switch between the installed `lfm3-local` and
+`lfm3-abliterated` variants. Both use Vulkan and a 4,096-token context. The
+server loads one variant at a time when you send a message. The first reply
+after a switch can take longer. A switch starts with fresh chat context while
+keeping your prompts, generation settings, and visible replies for comparison.
+The optional abliterated weights are a [Q4_K_M GGUF conversion of OrcaRouter’s model](https://huggingface.co/adolan/LFM3-1.7B-abliterated-GGUF).
+The launcher looks for `LFM3-1.7B-abliterated-Q4_K_M.gguf` in `var/lfm3`.
+
+Edit the **System prompt** and **User prompt**, then click **Send** or press
+**Ctrl+Enter**. Generation settings include streaming, temperature, output token
+limit, top-p, top-k, repetition penalty, and seed. **Load file** opens a UTF-8
+Markdown prompt such as `var/lfm3/test-prompt.md`. Save edits in your editor,
+then click **Reload file**. On supported llama.cpp servers, the playground
+counts the formatted prompt and checks it against the context limit before
+generating.
+
+**Thinking mode** offers **Off**, **On**, and **Server default**. With
+thinking on, choose a token limit and look in the **Thinking** tab for the
+trace. **Max output tokens** covers both thinking and the final response.
+The **Chat output** tab and carried history contain the final response.
+
+Clear **Include previous turns** to send each prompt independently. **Stop** cancels the current
+generation. **Clear chat** also cancels a running generation and resets the
+conversation, while **Clear prompts** empties the two text fields. The window
+keeps prompts and replies in memory for the session.
+
+For persona tests, use these sections in the prompt file.
+
+- **Identity and relationship** describes who is speaking and what connects them
+  to the other person.
+- **Tone and response rules** lists specific behaviors you can hear in a reply.
+- **Backstory** keeps the facts that matter in most conversations.
+- **Example exchanges** demonstrate the tone. Label them as examples.
+- **Current context** records the active topic, recent corrections, and facts
+  needed to answer the next message.
+- **Recent chat excerpts** supplies a small relevant window. Label the speakers
+  and treat quoted material as past dialogue. Keep the full archive available
+  to retrieve relevant older excerpts.
+
+Put the actual next message in **User prompt**. For comparisons, clear the
+conversation or disable **Include previous turns**, hold the seed and prompt
+steady, and change one setting at a time.
+
+For another local llama.cpp endpoint, start it separately and run
+`.\scripts\start-lfm3-playground.ps1 -SkipServer`. Set its loopback chat
+completions URL and type its model ID into **Model**.
+
 ## Monitoring and Jevos
 
 Click **Monitor** from any tab to open a separate read-only window. It samples
@@ -202,6 +274,37 @@ score, and model. Changing a question preserves the wording of earlier samples.
 SQLite retains 100 scored samples across launches. The scoring workflow keeps
 its message snapshots in memory and feeds the heatmap. Conversation replies
 continue through the existing Kindroid path.
+
+## Office Jevos
+
+In **Jevos**, select **Office only**, set the local SSH tunnel URL, and click
+**Save Jevos settings**. Leave **Enable Jevos decision scoring** checked to
+score. The office worker is the only target in this mode. If it is busy or
+unreachable, the latest eligible snapshot waits. **Nodes** shows its model,
+backend, readiness, and any available RAM and VRAM readings. Saved scores show
+the office hostname and backend.
+
+On the office PC, run the standalone `src/voice_harness/office_worker.py`
+with Python and the loopback URL of the existing Jevos v5 server. The server
+must expose `/health` and `/v1/systemone`. If it uses a bearer key, make that
+key available as `JEV_API_KEY` in the worker’s environment. The worker
+listens on office loopback port 18769 by default. Use `--seconds 120` for a
+short trial. On the laptop, forward its loopback port 18769 to office port
+18769 through the authorized SSH connection.
+
+```powershell
+# On the office PC, replace 8880 with the installed Jevos server port.
+python office_worker.py --jevos-url http://127.0.0.1:8880 --seconds 120
+
+# On the laptop, substitute the SSH user and host.
+ssh -N -L 127.0.0.1:18769:127.0.0.1:18769 user@office-host
+```
+
+The laptop sends the three-message scoring window and questions through the
+tunnel. It keeps the job and score history locally. Turning Jevos off stops
+new requests and discards results from invalidated jobs. The office worker
+can finish an already accepted computation within its request limit. The
+existing office Jevos server has its own lifetime.
 
 ## Phone calls
 
@@ -380,6 +483,12 @@ After Jevos Vulkan setup, run
 `.\scripts\test.ps1 -Pattern test_jevos_vulkan.py -LocalModels` to compare CPU
 and GPU scores on synthetic messages. Check **Models** for the Jevos worker's
 host working set and dedicated VRAM while it is warm.
+
+Use `.\scripts\test.ps1 -Pattern test_llm.py` and
+`.\scripts\test.ps1 -Pattern test_office.py` for synthetic reply and office
+worker fixtures. `test_decisions.py` checks that an office-only job waits while
+the worker is unreachable and runs once it returns, even under low laptop RAM.
+A live office trial uses synthetic messages through the second SSH connection.
 
 After phone runtime setup, run `.\scripts\test.ps1 -Pattern test_phone.py`.
 The fixture checks pairing, a single phone session, push-to-talk release, and

@@ -32,6 +32,8 @@ nav = [
         { "011 · Jevos on Vulkan" = "adr/011-jevos-vulkan.md" },
         { "012 · Phone audio" = "adr/012-phone-audio.md" },
         { "013 · Tailnet routing" = "adr/013-tailnet-routing.md" },
+        { "014 · LLM reply profiles" = "adr/014-llm-profiles.md" },
+        { "015 · Office Jevos" = "adr/015-office-jevos.md" },
     ] },
 ]
 

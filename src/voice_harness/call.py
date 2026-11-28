@@ -109,8 +109,8 @@ def _conversation(microphone, open_recognizer, speaker, provider, state, setting
                 previous = pending
                 previous.submitted = True
                 publish(Message(previous.id, "Marc", text, "Sending"))
-                stage("Waiting for Kindroid · speak to interrupt" if settings.interrupt
-                      else "Waiting for Kindroid")
+                reply_label = getattr(provider, "label", "Kindroid")
+                stage(f"Waiting for {reply_label}" + (" · speak to interrupt" if settings.interrupt else ""))
                 if previous.waited_for_delivery:
                     microphone.discard_buffered()
                 pending = Turn()
@@ -159,6 +159,8 @@ def _conversation(microphone, open_recognizer, speaker, provider, state, setting
 def _receive(provider, speaker, request, sent, interrupt, state, stop, stage, publish, *,
              work, completed, telemetry):
     answer_id = uuid4().hex
+    reply_label = getattr(provider, "label", "Kindroid")
+    reply_speaker = getattr(provider, "speaker", "Hannah")
 
     def delivery(status):
         sent.delivery = status
@@ -173,18 +175,18 @@ def _receive(provider, speaker, request, sent, interrupt, state, stop, stage, pu
             completed(message)
 
     def reply_update(body, status):
-        publish(Message(answer_id, "Hannah", body, status))
+        publish(Message(answer_id, reply_speaker, body, status))
 
     def reply_complete(body):
-        completed(Message(answer_id, "Hannah", body))
+        completed(Message(answer_id, reply_speaker, body))
 
     try:
-        with online(telemetry, "Kindroid connector"):
+        with online(telemetry, f"{reply_label} connector"):
             receive_reply(speaker, lambda cancel: provider.send(request, cancel), stop, stage, reply_update,
                           interrupt=interrupt, delivery=delivery, complete_text=reply_complete,
-                          timing=sent.timing, telemetry=telemetry)
+                          timing=sent.timing, telemetry=telemetry, reply_label=reply_label)
         if not sent.confirmed and not stop.is_set():
-            raise VoiceError("Kindroid returned no reply. Check delivery before calling again.")
+            raise VoiceError(f"{reply_label} returned no reply. Check delivery before calling again.")
     finally:
         if not sent.confirmed:
             status = "Not sent" if sent.delivery == "not_sent" else "Check delivery"

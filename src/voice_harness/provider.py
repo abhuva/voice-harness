@@ -16,7 +16,24 @@ HISTORY_LOOKBACK_HOURS = 24
 
 
 def stream_reply(manager, key, kin_id, message, stop, *, on_submit=None):
-    """A single cancellable POST on the call worker's Qt event dispatcher."""
+    payload = {"ai_id": kin_id, "message": message, "stream": True}
+    packets = post_packets(manager, BASE + "send-message", key, payload, stop, on_submit=on_submit,
+                           rejection=lambda status: PostRejected(
+                               status, f"Kindroid returned HTTP {status}. Check delivery before calling again."))
+    try:
+        yield from decode_reply(packets, stop)
+    finally:
+        packets.close()
+
+
+class PostRejected(VoiceError):
+    def __init__(self, status, message=None):
+        self.status = status
+        super().__init__(message or f"The reply endpoint returned HTTP {status}.")
+
+
+def post_packets(manager, endpoint, key, payload, stop, *, on_submit=None, service="Kindroid", rejection=PostRejected):
+    """A cancellable POST with a non-rewindable request body."""
     from PyQt6.QtCore import QEventLoop, QIODevice, QTimer, QUrl
     from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
 
@@ -47,10 +64,11 @@ def stream_reply(manager, key, kin_id, message, stop, *, on_submit=None):
         def seek(self, position):
             return False
 
-    data = json.dumps({"ai_id": kin_id, "message": message, "stream": True}).encode()
+    data = json.dumps(payload).encode()
     upload = OneShotUpload(data)
-    request = QNetworkRequest(QUrl(BASE + "send-message"))
-    request.setRawHeader(b"Authorization", b"Bearer " + key.encode())
+    request = QNetworkRequest(QUrl(endpoint))
+    if key:
+        request.setRawHeader(b"Authorization", b"Bearer " + key.encode("ascii"))
     request.setRawHeader(b"Content-Type", b"application/json")
     request.setHeader(QNetworkRequest.KnownHeaders.ContentLengthHeader, len(data))
     request.setAttribute(QNetworkRequest.Attribute.DoNotBufferUploadDataAttribute, True)
@@ -74,20 +92,20 @@ def stream_reply(manager, key, kin_id, message, stop, *, on_submit=None):
     def packets():
         while not stop.is_set():
             if time.monotonic() >= deadline:
-                raise VoiceError("The Kindroid reply timed out. Check the conversation.")
+                raise VoiceError(f"The {service} reply timed out. Check the conversation.")
             status = response.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
             if status is not None and status != 200:
-                raise VoiceError(f"Kindroid returned HTTP {status}. Check delivery before calling again.")
+                raise rejection(status)
             if response.bytesAvailable() and status == 200:
                 yield bytes(response.readAll())
             elif response.isFinished():
                 if response.error() != QNetworkReply.NetworkError.NoError:
-                    raise VoiceError("Delivery is uncertain. Check the Kindroid conversation before calling again.")
+                    raise VoiceError(f"Delivery is uncertain. Check the {service} conversation before calling again.")
                 return
             else:
                 loop.exec()
     try:
-        yield from decode_reply(packets(), stop)
+        yield from packets()
     finally:
         tick.stop()
         if not response.isFinished():

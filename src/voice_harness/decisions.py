@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 from threading import Condition, Event, Thread
-from time import monotonic, time
+from time import localtime, monotonic, strftime, time
 from uuid import uuid4
 
 from .contracts import VoiceError
@@ -13,6 +13,8 @@ from .harness import WorkerSpec
 from .hardware import available_nvidia_vram
 from .jevos import Jevos, MODEL, THREADS, installation
 from .jevos_vulkan import JevosVulkan, VULKAN_DIRECTORY, VULKAN_LABEL, vulkan_installation
+from .office import OfficeJevos, OfficeUnavailable
+from .office_worker import loopback_url
 from .residency import ModelKey
 from .work_types import ResourceProfile, WorkRequest
 
@@ -40,6 +42,7 @@ VULKAN_PROFILE = ResourceProfile(resident_bytes=1024 * MIB, extra_bytes=128 * MI
                                  accelerator_bytes=1280 * MIB, basis="Jevos v5 Vulkan Q8 · GTX 1050 Ti fixture estimates")
 DEVICES = {"cpu": "CPU (OpenVINO)", "vulkan": "GPU (Vulkan)"}
 VRAM_RESERVE = 256 * MIB
+OFFICE_PROFILE = ResourceProfile(0, 0, 0, basis="Office Jevos · no laptop model allocation")
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,8 @@ class DecisionSettings:
     directory: str
     questions: tuple[str, ...]
     backend: str = "cpu"
+    route: str = "local"
+    office_url: str = "http://127.0.0.1:18769"
 
 
 def read_settings(path, assets):
@@ -55,7 +60,8 @@ def read_settings(path, assets):
     try:
         values = json.loads(path.read_text("utf-8"))
         return validate_settings(values["enabled"], values["directory"], values["questions"],
-                                 backend=values.get("backend", "cpu"), check_install=False)
+                                 backend=values.get("backend", "cpu"), route=values.get("route", "local"),
+                                 office_url=values.get("office_url", default.office_url), check_install=False)
     except FileNotFoundError:
         try:
             installation(default.directory)
@@ -66,11 +72,18 @@ def read_settings(path, assets):
         return default
 
 
-def validate_settings(enabled, directory, questions, *, backend="cpu", vulkan_directory=None, check_install=True):
+def validate_settings(enabled, directory, questions, *, backend="cpu", vulkan_directory=None, check_install=True,
+                      route="local", office_url="http://127.0.0.1:18769"):
     if type(enabled) is not bool or not isinstance(directory, str) or len(directory) > 4096:
         raise VoiceError("Use a local Jevos installation folder.")
     if backend not in ("cpu", "vulkan"):
         raise VoiceError("Choose CPU or GPU for Jevos.")
+    if route not in ("local", "office") or not isinstance(office_url, str):
+        raise VoiceError("Choose a valid Jevos route and office tunnel address.")
+    try:
+        office_url = loopback_url(office_url.strip())
+    except ValueError as exc:
+        raise VoiceError(str(exc)) from None
     if not isinstance(questions, (list, tuple)) or not 1 <= len(questions) <= 24:
         raise VoiceError("Enter 1 to 24 yes/no questions, one per line.")
     if any(not isinstance(q, str) or not q.strip() or len(q) > 240 or "\x00" in q for q in questions):
@@ -78,14 +91,14 @@ def validate_settings(enabled, directory, questions, *, backend="cpu", vulkan_di
     questions = tuple(q.strip() for q in questions)
     if len(set(questions)) != len(questions):
         raise VoiceError("Each Jevos question must be unique.")
-    if enabled and check_install:
+    if enabled and check_install and route == "local":
         if backend == "vulkan":
             vulkan_installation(vulkan_directory)
         elif not directory.strip():
             raise VoiceError("Choose the local Jevos v5 installation folder.")
         else:
             installation(directory)
-    return DecisionSettings(enabled, directory.strip(), questions, backend)
+    return DecisionSettings(enabled, directory.strip(), questions, backend, route, office_url)
 
 
 def save_settings(path, settings):
@@ -173,13 +186,16 @@ class Cancellation:
 class Decisions:
     """One scored snapshot in flight and one newest pending snapshot, both in RAM."""
 
-    def __init__(self, harness, settings, *, engine=Jevos, gpu_engine=JevosVulkan, available_vram=available_nvidia_vram):
+    def __init__(self, harness, settings, *, engine=Jevos, gpu_engine=JevosVulkan, available_vram=available_nvidia_vram,
+                 office=OfficeJevos):
         self.harness = harness
         self.history = DecisionHistory(harness.state)
         self.settings = settings
         self.engines = {"cpu": engine, "vulkan": gpu_engine}
         self.vulkan_directory = harness.state.path.parent / VULKAN_DIRECTORY
         self.available_vram = available_vram
+        self.office = office
+        self._office_reading = (None, 0, None)
         self._messages = deque(maxlen=3)
         self._changed = Condition()
         self._pending = None
@@ -188,6 +204,8 @@ class Decisions:
         self._thread = None
         self._warm_since = None
         self.status = self._idle()
+        if self._office_enabled():
+            self._start_thread()
 
     def seed(self, message):
         with self._changed:
@@ -222,10 +240,21 @@ class Decisions:
             self._invalidated = Event()
             self._pending = None
             self.status = self._idle()
+            if self._office_enabled() and self._thread is None:
+                self._start_thread()
             if not settings.enabled:
                 self._messages.clear()
                 if self._thread is not None:
                     self.status = ("Jevos · stopping local scoring", True)
+            self._changed.notify()
+
+    def clear_context(self):
+        with self._changed:
+            self._messages.clear()
+            self._pending = None
+            self._invalidated.set()
+            self._invalidated = Event()
+            self.status = self._idle()
             self._changed.notify()
 
     def _idle(self):
@@ -253,13 +282,17 @@ class Decisions:
         try:
             while True:
                 with self._changed:
-                    self._changed.wait_for(self._wake, timeout=1 if self._warm_since is not None else None)
+                    interval = 1 if self._warm_since is not None or self._office_enabled() else None
+                    self._changed.wait_for(self._wake, timeout=interval)
                     if self._closing or not self.settings.enabled:
                         return
                     sample, self._pending = self._pending, None
+                    settings = self.settings
                 self._expire_model()
                 if sample is not None:
                     self._run_sample(sample)
+                elif settings.route == "office":
+                    self._probe_office(settings.office_url)
         finally:
             try:
                 self.harness.models.evict_idle(only="decision")
@@ -269,11 +302,33 @@ class Decisions:
                     self._warm_since = None
                     if not self.settings.enabled:
                         self.status = self._idle()
-                    elif not self._closing and self._pending is not None:
+                    elif not self._closing and (self._pending is not None or self._office_enabled()):
                         self._start_thread()
+
+    def _office_enabled(self):
+        return self.settings.enabled and self.settings.route == "office"
+
+    def _probe_office(self, url):
+        previous_url, at, reading = self._office_reading
+        now = monotonic()
+        if previous_url != url or now - at >= 3:
+            reading = self.office(url).status()
+            self._office_reading = (url, monotonic(), reading)
+        return reading
+
+    def office_node(self):
+        if not self._office_enabled():
+            return None
+        url, at, reading = self._office_reading
+        age = monotonic() - at
+        if url != self.settings.office_url or reading is None or age > 7:
+            return "Office worker", "Unreachable", "Waiting for the SSH tunnel or worker"
+        checked = strftime("%H:%M:%S", localtime(time() - age))
+        return reading.node, "Worker reachable", f"{reading.describe()} · checked {checked}"
 
     def _wake(self):
         return (self._closing or not self.settings.enabled or self._pending is not None
+                or (self._office_enabled() and self._office_reading[0] != self.settings.office_url)
                 or (self._warm_since is not None and self._warm_since[1].is_set()))
 
     def _expire_model(self):
@@ -285,22 +340,37 @@ class Decisions:
 
     def _run_sample(self, sample):
         backend = sample.settings.backend
-        gpu = backend == "vulkan"
+        office = sample.settings.route == "office"
+        gpu = backend == "vulkan" and not office
         directory = self.vulkan_directory if gpu else Path(sample.settings.directory)
         key = ModelKey("decision", (MODEL, str(directory), backend))
         profile = VULKAN_PROFILE if gpu else PROFILE
+        reading = None
+        retry = False
 
         def estimate(_work):
+            if office:
+                return OFFICE_PROFILE
             credit = self.harness.models.credit((key,))
             warm = gpu and any(row[0] == key for row in self.harness.models.snapshot())
             return replace(profile, resident_bytes=max(0, profile.resident_bytes - credit),
                            accelerator_bytes=256 * MIB if warm else profile.accelerator_bytes)
 
         def score(claimed, _access, stop):
+            nonlocal retry
             if claimed != work:
                 raise VoiceError("The decision snapshot is no longer available.")
             try:
-                self._score(sample, claimed, Cancellation(stop, sample.invalidated), key, directory)
+                token = Cancellation(stop, sample.invalidated)
+                if office:
+                    self._score_office(sample, claimed, token, reading)
+                else:
+                    self._score(sample, claimed, token, key, directory)
+            except OfficeUnavailable as exc:
+                self._report(sample, str(exc), True)
+                self._office_reading = (sample.settings.office_url, monotonic(), None)
+                retry = True
+                raise
             finally:
                 if sample.invalidated.is_set():
                     self.harness.cancel_work(claimed)
@@ -316,7 +386,7 @@ class Decisions:
             with self.harness.telemetry.online("Decision workflow"):
                 work = self.harness.submit_work(WorkRequest(CAPABILITY, session_only=True, yield_to_interactive=True),
                                                 workflow_id=sample.workflow, turn_id=sample.messages[-1].id)
-                worker = WorkerSpec(f"jevos-{backend}", {CAPABILITY: score}, estimate)
+                worker = WorkerSpec("jevos-office" if office else f"jevos-{backend}", {CAPABILITY: score}, estimate)
 
                 def waiting(reason):
                     self._report(sample, "Jevos · " + reason, True)
@@ -330,8 +400,14 @@ class Decisions:
                         self._report(sample, "Jevos Vulkan needs VRAM readings from one NVIDIA GPU. Select CPU in Jevos.")
                         return
                     budget = max(0, free_vram - VRAM_RESERVE) if gpu else None
-                    if self.harness.run_next(worker, accelerator_available=budget, waiting=waiting):
-                        if gpu and self.harness.queue.status(work.scope.job_id) == "cancelled":
+                    reading = self._probe_office(sample.settings.office_url) if office else None
+                    ready = not office or (reading is not None and reading.state == "ready")
+                    if not ready:
+                        waiting("office worker unreachable" if reading is None else f"office Jevos is {reading.state}")
+                    if ready and not sample.invalidated.is_set() and self.harness.run_next(
+                            worker, accelerator_available=budget, waiting=waiting):
+                        preempted = (gpu or office) and self.harness.queue.status(work.scope.job_id) == "cancelled"
+                        if retry or preempted:
                             with self._changed:
                                 if not sample.invalidated.is_set() and self._pending is None:
                                     self._pending = sample
@@ -341,7 +417,7 @@ class Decisions:
                             return
                         self._changed.wait(timeout=0.5)
         except Exception:
-            self._report(sample, "Jevos · could not run the local scoring job")
+            self._report(sample, "Jevos · could not run the scoring job")
         finally:
             if work is not None:
                 try:
@@ -349,6 +425,22 @@ class Decisions:
                     self.history.prune()
                 except Exception:
                     self._report(sample, "Jevos · could not update the local job state")
+
+    def _score_office(self, sample, work, stop, reading):
+        self._report(sample, f"Jevos · scoring on {reading.node}", True)
+        try:
+            with self.harness.telemetry.online("Office Jevos scorer"):
+                scores = self.office(sample.settings.office_url).score(
+                    work.scope, sample.messages, sample.settings.questions, stop)
+            if scores is not None and not stop.is_set():
+                label = f"{MODEL} · {reading.node} ({reading.backend})"
+                self.history.save(work, sample.observed, sample.settings.questions, scores, model=label)
+                self._report(sample, f"Jevos · scores saved from {reading.node}")
+        except OfficeUnavailable:
+            raise
+        except VoiceError as exc:
+            self._report(sample, str(exc))
+            raise
 
     def _score(self, sample, work, stop, key, directory):
         backend = sample.settings.backend

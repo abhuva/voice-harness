@@ -78,6 +78,7 @@ def main():
             lambda: (f"Call processing, local playback · {STT_MODELS[window.saved_call_input.model]}"
                      f" · {TTS_MODELS[window.voice.model]}"),
             lambda: window.tabs.setCurrentIndex(phone_tab),
+            office_node=window.decisions.office_node,
         )
         window.tabs.addTab(nodes, "Nodes")
     except (OSError, StateError, VoiceError) as exc:

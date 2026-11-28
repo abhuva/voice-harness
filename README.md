@@ -62,6 +62,13 @@ Open the optional **Phone** tab to pair a browser on your Tailscale network.
 The phone can use **Push to talk** or **Hands-free · WebRTC** while the laptop
 does the processing. See [Phone calls](docs/operations.md#phone-calls).
 
+Use **LLM** to save named OpenRouter or compatible reply profiles, then choose
+the next call’s provider in **Chat**. See [Reply profiles](docs/operations.md#reply-profiles)
+and [Office Jevos](docs/operations.md#office-jevos).
+
+Double-click **Start LFM3 Playground.bat** to test the installed local LFM3 models in
+a separate text window. See [LFM3 Playground](docs/operations.md#lfm3-playground).
+
 ## Develop
 
 Read [AGENTS.md](AGENTS.md) and the [documentation map](docs/README.md). From PowerShell,

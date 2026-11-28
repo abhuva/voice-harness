@@ -11,7 +11,8 @@ from .telemetry import online
 
 
 def receive_reply(speaker, open_stream, stop, stage, update, *, interrupt=None,
-                  delivery=lambda _status: None, complete_text=lambda _text: None, timing=None, telemetry=None):
+                  delivery=lambda _status: None, complete_text=lambda _text: None, timing=None,
+                  telemetry=None, reply_label="Kindroid"):
     speech = Queue(maxsize=8)
     failed = Event()
     input_done = Event()
@@ -101,10 +102,10 @@ def receive_reply(speaker, open_stream, stop, stage, update, *, interrupt=None,
                     if not reply:
                         if timing is not None:
                             timing.mark("first_text")
-                        reply_stage("Receiving Kindroid reply" + prompt)
+                        reply_stage(f"Receiving {reply_label} reply" + prompt)
                     reply += delta
                     if len(reply) > 512 * 1024:
-                        raise VoiceError("Kindroid reply exceeded the display limit.")
+                        raise VoiceError(f"{reply_label} reply exceeded the display limit.")
                     now = time.monotonic()
                     if now - last_update >= 0.05:
                         update(reply, "Interrupted" if interrupt.is_set() else "Receiving")
